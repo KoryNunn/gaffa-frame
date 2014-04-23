@@ -24,7 +24,12 @@ Frame.prototype.url = new Gaffa.Property(function(view, value){
         return;
     }
 
-    this.gaffa.ajax({
+    if(this._pendingRequest){
+        this._pendingRequest.about();
+        this._pendingRequest = null;
+    }
+
+    this._pendingRequest = this.gaffa.ajax({
         url: value,
         type: 'get',
         dataType: 'json',

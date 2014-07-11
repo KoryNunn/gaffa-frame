@@ -1,0 +1,19 @@
+{
+    "_type":"container",
+    "views":{
+        "content":[
+            {
+                "_type":"text",
+                "text":{
+                    "binding":"[value]"
+                }
+            },
+            {
+                "_type":"textbox",
+                "value":{
+                    "binding":"[value]"
+                }
+            }
+        ]
+    }
+}

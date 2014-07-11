@@ -16,26 +16,29 @@ Frame.prototype.render = function(){
 };
 
 Frame.prototype.url = new Gaffa.Property(function(view, value){
-    if(this._loadedView){
-        this._loadedView.remove();
+    var gaffa = this.gaffa;
+
+    if(view._loadedView){
+        view._loadedView.remove();
+        view._loadedView = null;
     }
 
     if(value == null){
         return;
     }
 
-    if(this._pendingRequest){
-        this._pendingRequest.about();
-        this._pendingRequest = null;
+    if(view._pendingRequest){
+        view._pendingRequest.abort();
+        view._pendingRequest = null;
     }
 
-    this._pendingRequest = this.gaffa.ajax({
+    view._pendingRequest = gaffa.ajax({
         url: value,
         type: 'get',
         dataType: 'json',
         success: function(data){
             var viewDefinition = statham.revive(data),
-                child = gaffa.initialiseViewItem(viewDefinition, view.gaffa, gaffa.views._constructors);
+                child = gaffa.initialiseView(viewDefinition);
 
             view._loadedView = child;
             view.views.content.add(child);
@@ -46,6 +49,7 @@ Frame.prototype.url = new Gaffa.Property(function(view, value){
         },
         complete: function(){
             view.triggerActions('complete');
+            view._pendingRequest = null;
         }
     });
 });

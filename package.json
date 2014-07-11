@@ -23,5 +23,15 @@
   "homepage": "https://github.com/KoryNunn/gaffa-frame",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "gaffa": "^1.10.3",
+    "gaffa-container": "^1.0.0",
+    "gaffa-text": "^1.0.0",
+    "gaffa-textbox": "^1.3.0",
+    "gel-js": "^1.7.1"
+  },
+  "dependencies": {
+    "crel": "^1.1.2"
   }
 }

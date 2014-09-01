@@ -18,11 +18,6 @@ Frame.prototype.render = function(){
 Frame.prototype.url = new Gaffa.Property(function(view, value){
     var gaffa = this.gaffa;
 
-    if(view._loadedView){
-        view._loadedView.remove();
-        view._loadedView = null;
-    }
-
     if(value == null){
         return;
     }
@@ -40,7 +35,13 @@ Frame.prototype.url = new Gaffa.Property(function(view, value){
             var viewDefinition = statham.revive(data),
                 child = gaffa.initialiseView(viewDefinition);
 
+            if(view._loadedView){
+                view._loadedView.remove();
+                view._loadedView = null;
+            }
+
             view._loadedView = child;
+            view.views.content.abortDeferredAdd();
             view.views.content.add(child);
             view.triggerActions('success');
         },

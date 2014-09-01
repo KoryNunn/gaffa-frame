@@ -1,7 +1,7 @@
 {
   "name": "gaffa-frame",
   "author": "Kory Nunn <knunn187@gmail.com>",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "main": "frame.js",
   "repository": {
     "type": "git",

@@ -22,7 +22,8 @@
   "description": "frame view for loading UI into a [gaffa](https://github.com/gaffa-tape/gaffa-js) application",
   "homepage": "https://github.com/KoryNunn/gaffa-frame",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "browserify test/index.js > test/index.browser.js"
   },
   "devDependencies": {
     "gaffa": "^1.10.3",
@@ -32,6 +33,8 @@
     "gel-js": "^1.7.1"
   },
   "dependencies": {
-    "crel": "^1.1.2"
+    "crel": "^2.1.2",
+    "simple-ajax": "0.0.1",
+    "statham": "^1.0.0"
   }
 }

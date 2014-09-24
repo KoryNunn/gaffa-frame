@@ -1,6 +1,7 @@
 var Gaffa = require('gaffa'),
     crel = require('crel'),
-    statham = require('statham');
+    statham = require('statham'),
+    Ajax = require('simple-ajax');
 
 function Frame(){}
 Frame = Gaffa.createSpec(Frame, Gaffa.ContainerView);
@@ -23,36 +24,39 @@ Frame.prototype.url = new Gaffa.Property(function(view, value){
     }
 
     if(view._pendingRequest){
-        view._pendingRequest.abort();
+        view._pendingRequest.request.abort();
         view._pendingRequest = null;
     }
 
-    view._pendingRequest = gaffa.ajax({
+    var ajax = view._pendingRequest = new Ajax({
         url: value,
-        type: 'get',
+        method: 'get',
         dataType: 'json',
-        success: function(data){
-            var viewDefinition = statham.revive(data),
-                child = gaffa.initialiseView(viewDefinition);
-
-            if(view._loadedView){
-                view._loadedView.remove();
-                view._loadedView = null;
-            }
-
-            view._loadedView = child;
-            view.views.content.abortDeferredAdd();
-            view.views.content.add(child);
-            view.triggerActions('success');
-        },
-        error: function(error){
-            view.triggerActions('error', {error: error});
-        },
-        complete: function(){
-            view.triggerActions('complete');
-            view._pendingRequest = null;
-        }
+        contentType: 'json'
     });
+    ajax.on('success', function(event, data){
+        var viewDefinition = statham.revive(data),
+            child = gaffa.initialiseView(viewDefinition);
+
+        if(view._loadedView){
+            view._loadedView.remove();
+            view._loadedView = null;
+        }
+
+        view._loadedView = child;
+        view.views.content.abortDeferredAdd();
+        view.views.content.add(child);
+        view.triggerActions('success');
+    });
+    ajax.on('error', function(event, error){
+        view.triggerActions('error', {error: error});
+    });
+    ajax.on('complete', function(){
+        view.triggerActions('complete');
+        view._pendingRequest = null;
+    });
+
+    ajax.send();
 });
 
 module.exports = Frame;

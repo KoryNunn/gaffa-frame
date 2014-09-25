@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "crel": "^2.1.2",
-    "simple-ajax": "0.0.1",
+    "simple-ajax": "^1.0.0",
     "statham": "^1.0.0"
   }
 }

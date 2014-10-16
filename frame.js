@@ -45,7 +45,7 @@ Frame.prototype._requestData = function(url, callback){
     ajax.send();
 };
 Frame.prototype._error = function(error){
-    view.triggerActions('error', {error: error});
+    this.triggerActions('error', {error: error});
 };
 Frame.prototype._load = function(data){
     var gaffa = this.gaffa;

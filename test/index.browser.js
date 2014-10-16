@@ -1,67 +1,94 @@
-(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({"/home/kory/dev/gaffa-frame/frame.js":[function(require,module,exports){
 var Gaffa = require('gaffa'),
     crel = require('crel'),
     statham = require('statham'),
     Ajax = require('simple-ajax');
+
+var viewCache = {};
 
 function Frame(){}
 Frame = Gaffa.createSpec(Frame, Gaffa.ContainerView);
 Frame.prototype._type = 'frame';
 
 Frame.prototype.render = function(){
-    var textNode = document.createTextNode(''),
-        renderedElement = crel(this.tagName || 'div');
+    var renderedElement = crel(this.tagName || 'div');
 
     this.views.content.element = renderedElement;
 
     this.renderedElement = renderedElement;
 };
-
-Frame.prototype.url = new Gaffa.Property(function(view, value){
-    var gaffa = this.gaffa;
-
-    if(value == null){
+Frame.prototype._requestData = function(url, callback){
+    if(url == null){
         return;
     }
 
-    if(view._pendingRequest){
-        view._pendingRequest.request.abort();
-        view._pendingRequest = null;
+    if(this._pendingRequest){
+        this._pendingRequest.request.abort();
+        this._pendingRequest = null;
     }
 
-    var ajax = view._pendingRequest = new Ajax({
-        url: value,
+    var ajax = this._pendingRequest = new Ajax({
+        url: url,
         method: 'get',
         dataType: 'json',
         contentType: 'json'
     });
     ajax.on('success', function(event, data){
-        var viewDefinition = statham.revive(data),
-            child = gaffa.initialiseView(viewDefinition);
-
-        if(view._loadedView){
-            view._loadedView.remove();
-            view._loadedView = null;
-        }
-
-        view._loadedView = child;
-        view.views.content.abortDeferredAdd();
-        view.views.content.add(child);
-        view.triggerActions('success');
+        callback(null, data);
     });
     ajax.on('error', function(event, error){
-        view.triggerActions('error', {error: error});
+        callback({error: error});
     });
     ajax.on('complete', function(){
-        view.triggerActions('complete');
-        view._pendingRequest = null;
+        this._pendingRequest = null;
     });
 
     ajax.send();
+};
+Frame.prototype._error = function(error){
+    view.triggerActions('error', {error: error});
+};
+Frame.prototype._load = function(data){
+    var gaffa = this.gaffa;
+    
+    if(this._loadedView){
+        this._loadedView.remove();
+        this._loadedView = null;
+    }
+
+    if(!data){
+        this._error('No view was found');
+        return;
+    }
+
+    var child = gaffa.initialiseView(statham.revive(data));
+    this._loadedView = child;
+    this.views.content.abortDeferredAdd();
+    this.views.content.add(child);
+    this.triggerActions('success');
+    this.triggerActions('complete');
+};
+Frame.prototype.url = new Gaffa.Property(function(view, value){
+    if(!viewCache[value] || !view.cache.value){
+        view._requestData(value, function(error, data){
+            if(error){
+                view._error(error);
+                return;
+            }
+
+            viewCache[value] = data;
+            view._load(data);
+        });
+    }else{
+        view._load(viewCache[value]);
+    }
+});
+Frame.prototype.cache = new Gaffa.Property({
+    value: true
 });
 
 module.exports = Frame;
-},{"crel":2,"gaffa":17,"simple-ajax":65,"statham":69}],2:[function(require,module,exports){
+},{"crel":"/home/kory/dev/gaffa-frame/node_modules/crel/crel.js","gaffa":"/home/kory/dev/gaffa-frame/node_modules/gaffa/gaffa.js","simple-ajax":"/home/kory/dev/gaffa-frame/node_modules/simple-ajax/index.js","statham":"/home/kory/dev/gaffa-frame/node_modules/statham/statham.js"}],"/home/kory/dev/gaffa-frame/node_modules/crel/crel.js":[function(require,module,exports){
 //Copyright (C) 2012 Kory Nunn
 
 //Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
@@ -108,21 +135,28 @@ module.exports = Frame;
     }
 }(this, function () {
     var fn = 'function',
-        isElement = typeof Element === fn ? function (object) {
-            return object instanceof Element;
+        obj = 'object',
+        isType = function(a, type){
+            return typeof a === type;
+        },
+        isNode = typeof Node === fn ? function (object) {
+            return object instanceof Node;
         } :
-        // in IE <= 8 Element is an object, obviously..
+        // in IE <= 8 Node is an object, obviously..
         function(object){
             return object &&
-                (typeof object==="object") &&
-                (object.nodeType===1) &&
-                (typeof object.ownerDocument ==="object");
+                isType(object, obj) &&
+                ('nodeType' in object) &&
+                isType(object.ownerDocument,obj);
+        },
+        isElement = function (object) {
+            return crel.isNode(object) && object.nodeType === 1;
         },
         isArray = function(a){
             return a instanceof Array;
         },
         appendChild = function(element, child) {
-          if(!isElement(child)){
+          if(!isNode(child)){
               child = document.createTextNode(child);
           }
           element.appendChild(child);
@@ -144,13 +178,13 @@ module.exports = Frame;
             return element;
         }
 
-        if(typeof settings !== 'object' || crel.isElement(settings) || isArray(settings)) {
+        if(!isType(settings,obj) || crel.isNode(settings) || isArray(settings)) {
             --childIndex;
             settings = null;
         }
 
         // shortcut if there is only one child that is a string
-        if((argumentsLength - childIndex) === 1 && typeof args[childIndex] === 'string' && element.textContent !== undefined){
+        if((argumentsLength - childIndex) === 1 && isType(args[childIndex], 'string') && element.textContent !== undefined){
             element.textContent = args[childIndex];
         }else{
             for(; childIndex < argumentsLength; ++childIndex){
@@ -192,11 +226,12 @@ module.exports = Frame;
 
     // String referenced so that compilers maintain the property name.
     crel["isElement"] = isElement;
+    crel["isNode"] = isNode;
 
     return crel;
 }));
 
-},{}],3:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa-container/container.js":[function(require,module,exports){
 var Gaffa = require('gaffa');
 
 function Container(){}
@@ -210,7 +245,7 @@ Container.prototype.render = function(){
 };
 
 module.exports = Container;
-},{"gaffa":17}],4:[function(require,module,exports){
+},{"gaffa":"/home/kory/dev/gaffa-frame/node_modules/gaffa/gaffa.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa-text/text.js":[function(require,module,exports){
 var Gaffa = require('gaffa'),
     crel = require('crel'),
     viewType = "text";
@@ -237,7 +272,7 @@ Text.prototype.enabled = undefined;
 Text.prototype.classes = undefined;
 
 module.exports = Text;
-},{"crel":2,"gaffa":17}],5:[function(require,module,exports){
+},{"crel":"/home/kory/dev/gaffa-frame/node_modules/crel/crel.js","gaffa":"/home/kory/dev/gaffa-frame/node_modules/gaffa/gaffa.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/formelement.js":[function(require,module,exports){
 var Gaffa = require('gaffa'),
     crel = require('crel'),
     doc = require('doc-js');
@@ -330,7 +365,7 @@ FormElement.prototype.enabled = new Gaffa.Property({
 });
 
 module.exports = FormElement;
-},{"crel":2,"doc-js":7,"gaffa":17}],6:[function(require,module,exports){
+},{"crel":"/home/kory/dev/gaffa-frame/node_modules/crel/crel.js","doc-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/fluent.js","gaffa":"/home/kory/dev/gaffa-frame/node_modules/gaffa/gaffa.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/doc.js":[function(require,module,exports){
 var doc = {
     document: typeof document !== 'undefined' ? document : null,
     setDocument: function(d){
@@ -862,7 +897,7 @@ doc.isVisible = isVisible;
 doc.ready = ready;
 
 module.exports = doc;
-},{"./getTarget":8,"./getTargets":9,"./isList":10}],7:[function(require,module,exports){
+},{"./getTarget":"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/getTarget.js","./getTargets":"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/getTargets.js","./isList":"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/isList.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/fluent.js":[function(require,module,exports){
 var doc = require('./doc'),
     isList = require('./isList'),
     getTargets = require('./getTargets')(doc.document),
@@ -942,7 +977,7 @@ flocProto.removeClass = function(className){
 };
 
 module.exports = floc;
-},{"./doc":6,"./getTargets":9,"./isList":10}],8:[function(require,module,exports){
+},{"./doc":"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/doc.js","./getTargets":"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/getTargets.js","./isList":"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/isList.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/getTarget.js":[function(require,module,exports){
 var singleId = /^#\w+$/;
 
 module.exports = function(document){
@@ -957,7 +992,7 @@ module.exports = function(document){
         return target;
     };
 };
-},{}],9:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/getTargets.js":[function(require,module,exports){
 
 var singleClass = /^\.\w+$/,
     singleId = /^#\w+$/,
@@ -983,7 +1018,7 @@ module.exports = function(document){
         return target;
     };
 };
-},{}],10:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/isList.js":[function(require,module,exports){
 module.exports = function isList(object){
     return object !== window && (
         object instanceof Array ||
@@ -997,7 +1032,7 @@ module.exports = function isList(object){
     );
 }
 
-},{}],11:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/textbox.js":[function(require,module,exports){
 var Gaffa = require('gaffa'),
     FormElement = require('gaffa-formelement');
 
@@ -1018,7 +1053,7 @@ Textbox.prototype.maxLength = new Gaffa.Property(function(view, value){
 });
 
 module.exports = Textbox;
-},{"gaffa":17,"gaffa-formelement":5}],12:[function(require,module,exports){
+},{"gaffa":"/home/kory/dev/gaffa-frame/node_modules/gaffa/gaffa.js","gaffa-formelement":"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/formelement.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/action.js":[function(require,module,exports){
 var createSpec = require('spec-js'),
     Property = require('./property'),
     statham = require('statham'),
@@ -1029,6 +1064,7 @@ function triggerAction(action, parent, scope, event) {
     action = parent.gaffa.initialiseAction(statham.revive(JSON.parse(statham.stringify(action))));
 
     action.bind(parent, scope);
+    action.path = action.getPath();
 
     scope || (scope = {});
 
@@ -1036,7 +1072,9 @@ function triggerAction(action, parent, scope, event) {
         action.trigger(parent, scope, event);
     }
 
-    action.debind();
+    if(!action._async){
+        action.complete();
+    }
 }
 
 function triggerActions(actions, parent, scope, event) {
@@ -1059,27 +1097,45 @@ Action.prototype.trigger = function(){
 Action.prototype.condition = new Property({
     value: true
 });
+
+// Because actions shouldn't neccisarily debind untill they are complete,
+// They have an odd debind impementation.
 Action.prototype.debind = function(){
-    // Some actions are asynchronous.
-    // They should not debind until they are truely complete,
-    // or they are destroyed.
-    if(this._async && !this._complete){
-        return this.on('complete', this.debind.bind(this));
+    if(!this._complete && !this._destroyed){
+        return;
     }
-    ViewItem.prototype.debind.call(this);
     this.complete();
 };
 Action.prototype.complete = function(){
     if(this._complete){
         return;
     }
+
     this._complete = true;
+    var action = this;
+    this.on('debind', function(){
+        action.destroy();
+    });
     this.emit('complete');
-    this.debind();
+    ViewItem.prototype.debind.call(this);
+};
+
+// Only actually destroy if either the actions parent was not an Action,
+// Or if its Action parent was explicitly destroyed.
+Action.prototype.destroy = function(){
+    if(!this._complete && (this.parent instanceof Action ? this.parent._canceled : true)){
+        this._canceled = true;
+    }
+
+    if(!this._complete && !this._canceled){
+        return;
+    }
+
+    ViewItem.prototype.destroy.call(this);
 };
 
 module.exports = Action;
-},{"./property":51,"./viewItem":57,"spec-js":45,"statham":69}],13:[function(require,module,exports){
+},{"./property":"/home/kory/dev/gaffa-frame/node_modules/gaffa/property.js","./viewItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewItem.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js","statham":"/home/kory/dev/gaffa-frame/node_modules/statham/statham.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/behaviour.js":[function(require,module,exports){
 var createSpec = require('spec-js'),
     ViewItem = require('./viewItem');
 
@@ -1090,7 +1146,7 @@ Behaviour.prototype.bind = function(parent){
 }
 
 module.exports = Behaviour;
-},{"./viewItem":57,"spec-js":45}],14:[function(require,module,exports){
+},{"./viewItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewItem.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/bindable.js":[function(require,module,exports){
 var createSpec = require('spec-js'),
     EventEmitter = require('events').EventEmitter,
     jsonConverter = require('./jsonConverter');
@@ -1137,7 +1193,6 @@ function Bindable(){
     this.setMaxListeners(1000);
     // instance unique ID
     this.__iuid = iuid++;
-    Bindable.bindables[this.__iuid] = this;
 }
 Bindable = createSpec(Bindable, EventEmitter);
 Bindable.bindables = {};
@@ -1158,9 +1213,22 @@ Bindable.prototype.toJSON = function(){
 
     return tempObject;
 };
-Bindable.prototype.bind = function(parent){
-    var bindable = this;
 
+function setupCleanup(bindable, parent){
+    var onDebind = bindable.debind.bind(bindable);
+    parent.once('debind', onDebind);
+    bindable.once('debind', function(){
+        bindable.parent.removeListener('debind', onDebind);
+    });
+
+    var onDestroy = bindable.destroy.bind(bindable);
+    parent.once('destroy', onDestroy);
+    bindable.once('destroy', function(){
+        bindable.parent.removeListener('destroy', onDestroy);
+    });
+}
+
+Bindable.prototype.bind = function(parent){
     if(parent && !parent._bound){
         console.warn('Attempted to bind to a parent who was not bound.');
         return;
@@ -1174,13 +1242,14 @@ Bindable.prototype.bind = function(parent){
         this.gaffa = parent.gaffa;
         this.parent = parent;
         this._parentId = parent.__iuid;
-        parent.once('debind', this.debind.bind(this));
-        parent.once('destroy', this.destroy.bind(this));
+
+        setupCleanup(this, parent);
     }
 
     this.updatePath();
 
     this._bound = true;
+    Bindable.bindables[this.__iuid] = this;
     this.emit('bind');
     this.removeAllListeners('bind');
 };
@@ -1231,29 +1300,39 @@ Bindable.prototype.debind = function(){
 
     this.emit('debind');
     this.removeAllListeners('debind');
+    delete Bindable.bindables[this.__iuid];
 };
 Bindable.prototype.destroy = function(){
     var bindable = this;
 
-    delete Bindable.bindables[this.__iuid];
     this._destroyed = true;
 
     if(this._bound){
         this.debind();
     }
 
-    this.emit('destroy');
-    this.removeAllListeners('destroy');
+    for(var key in this){
+        if(key !== 'parent' && this[key] instanceof Bindable && this[key]._bound){
+            console.log(key);
+        }
+    }
 
-    // Let any children bound to 'destroy' do their thing before actually destroying this.
+    // Destroy bindables asynchonously.
     eventually(function(){
-        bindable.gaffa = null;
-        bindable.parent = null;
+
+        bindable.emit('destroy');
+        bindable.removeAllListeners('destroy');
+
+        // Let any children bound to 'destroy' do their thing before actually destroying this.
+        eventually(function(){
+            bindable.gaffa = null;
+            bindable.parent = null;
+        });
     });
 };
 
 module.exports = Bindable;
-},{"./jsonConverter":23,"events":76,"spec-js":45}],15:[function(require,module,exports){
+},{"./jsonConverter":"/home/kory/dev/gaffa-frame/node_modules/gaffa/jsonConverter.js","events":"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/events/events.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/containerView.js":[function(require,module,exports){
 /**
     ## ContainerView
 
@@ -1291,10 +1370,10 @@ ContainerView.prototype.renderChildren = new Property({
         }
     },
     value: true
-})
+});
 
 module.exports = ContainerView;
-},{"./property":51,"./view":55,"./viewContainer":56,"spec-js":45}],16:[function(require,module,exports){
+},{"./property":"/home/kory/dev/gaffa-frame/node_modules/gaffa/property.js","./view":"/home/kory/dev/gaffa-frame/node_modules/gaffa/view.js","./viewContainer":"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewContainer.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/createModelScope.js":[function(require,module,exports){
 function createModelScope(parent, gediEvent){
     var possibleGroup = parent,
         groupKey,
@@ -1312,7 +1391,35 @@ function createModelScope(parent, gediEvent){
     return scope;
 }
 module.exports = createModelScope;
-},{}],17:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/excludeProps.js":[function(require,module,exports){
+module.exports = ["_trackedListeners", "__iuid", "gaffa", "parent", "parentContainer", "renderedElement", "_removeHandlers", "gediCallbacks", "__super__", "_events", "consuela"];
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/flatMerge.js":[function(require,module,exports){
+function flatMerge(a,b){
+    if(!b || typeof b !== 'object'){
+        b = {};
+    }
+
+    if(!a || typeof a !== 'object'){
+        a = new b.constructor();
+    }
+    
+    var result = new a.constructor(),
+        aKeys = Object.keys(a),
+        bKeys = Object.keys(b);
+
+    for(var i = 0; i < aKeys.length; i++){
+        result[aKeys[i]] = a[aKeys[i]];
+    }
+
+    for(var i = 0; i < bKeys.length; i++){
+        result[bKeys[i]] = b[bKeys[i]];
+    }
+
+    return result;
+};
+
+module.exports = flatMerge;
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/gaffa.js":[function(require,module,exports){
 //Copyright (C) 2012 Kory Nunn, Matt Ginty & Maurice Butler
 
 //Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
@@ -1353,7 +1460,9 @@ function clone(value){
 
 function Gaffa(){
     var gedi,
-        gaffa = Object.create(EventEmitter.prototype);
+        gaffa = this;
+
+    this.gaffa = this;
 
     // internal varaibles
 
@@ -1361,7 +1470,7 @@ function Gaffa(){
     var internalModel = {},
 
         // Storage for the applications view.
-        internalViewItems = [],
+        rootViewContainer = new ViewContainer(),
 
         // Storage for application actions.
         internalActions = {},
@@ -1372,12 +1481,21 @@ function Gaffa(){
         // Storage for interval based behaviours.
         internalIntervals = [];
 
+    rootViewContainer.gaffa = this;
+    rootViewContainer.renderTarget = 'body';
+
+    if(typeof window !== 'undefined'){
+        doc.ready(function(){
+            gaffa._bound = true;
+            rootViewContainer.bind(gaffa);
+        });
+    }
 
     // Gedi initialisation
     gedi = new Gedi(internalModel);
 
     // Add gedi instance to gaffa.
-    gaffa.gedi = gedi;
+    this.gedi = gedi;
 
     function modelGet(path, viewItem, scope, asTokens) {
         if(!(viewItem instanceof ViewItem || viewItem instanceof Property)){
@@ -1448,328 +1566,243 @@ function Gaffa(){
         var gaffa = new Gaffa();
 */
 
-    var gaffaPublicObject = {
+    /**
+        ### .events
+
+        used throughout gaffa for binding DOM events.
+    */
+    this.events = {
 
         /**
-            ### .createSpec
+            ### .on
 
-                function myConstructor(){}
-                myConstructor = gaffa.createSpec(myConstructor, inheritedConstructor);
+            usage:
 
-            npm module: [spec-js](https://npmjs.org/package/spec-js)
+                gaffa.events.on('eventname', target, callback);
         */
-        createSpec: createSpec,
-
-        /**
-            ### .jsonConverter
-
-            default jsonification for ViewItems
-        */
-        jsonConverter: jsonConverter,
-
-        /**
-            ### .initialiseViewItem
-
-            takes the plain old object representation of a viewItem and returns an instance of ViewItem with all the settings applied.
-
-            Also recurses through the ViewItem's tree and inflates children.
-        */
-        initialiseViewItem: function(viewItem, specCollection, references){
-            return initialiseViewItem(viewItem, this, specCollection, references);
-        },
-
-        initialiseView: function(view, references){
-            return initialiseView(view, this, references);
-        },
-
-        initialiseAction: function(action, references){
-            return initialiseAction(action, this, references);
-        },
-
-        initialiseBehaviour: function(behaviour, references){
-            return initialiseBehaviour(behaviour, this, references);
-        },
-
-        /**
-            ### .initialiseViewItem
-
-            takes the plain old object representation of a viewItem and returns an instance of ViewItem with all the settings applied.
-
-            Also recurses through the ViewItem's tree and inflates children.
-        */
-        registerConstructor: function(constructor){
-            if(Array.isArray(constructor)){
-                for(var i = 0; i < constructor.length; i++){
-                    gaffa.registerConstructor(constructor[i]);
-                }
+        on: function(eventName, target, callback){
+            if('on' + eventName.toLowerCase() in target){
+                return doc.on(eventName, target, callback);
             }
-
-            var constructorType = constructor.prototype instanceof View && 'views' ||
-                constructor.prototype instanceof Action && 'actions' ||
-                constructor.prototype instanceof Behaviour && 'behaviours';
-
-            if(constructorType){
-                // ToDo: Deprecate .type
-                gaffa[constructorType]._constructors[constructor.prototype._type || constructor.prototype.type] = constructor;
-            }else{
-                throw "The provided constructor was not an instance of a View, Action, or Behaviour" +
-                    "\n This is likely due to having two version of Gaffa installed" +
-                    "\n Run 'npm ls gaffa' to check, and 'npm dedupe to fix'";
-            }
-        },
-
-        /**
-            ### .events
-
-            used throughout gaffa for binding DOM events.
-        */
-        events:{
-
-            /**
-                ### .on
-
-                usage:
-
-                    gaffa.events.on('eventname', target, callback);
-            */
-            on: function(eventName, target, callback){
-                if('on' + eventName.toLowerCase() in target){
-                    return doc.on(eventName, target, callback);
-                }
-            }
-        },
-
-        /**
-            ## .model
-
-            access to the applications model
-        */
-        model: {
-
-            /**
-                ### .get(path, viewItem, scope, asTokens)
-
-                used to get data from the model.
-                path is relative to the viewItems path.
-
-                    gaffa.model.get('[someProp]', parentViewItem);
-            */
-            get: modelGet,
-
-            /**
-                ### .set(path, value, viewItem, dirty)
-
-                used to set data into the model.
-                path is relative to the viewItems path.
-
-                    gaffa.model.set('[someProp]', 'hello', parentViewItem);
-            */
-            set: modelSet,
-
-            /**
-                ### .remove(path, viewItem, dirty)
-
-                used to remove data from the model.
-                path is relative to the viewItems path.
-
-                    gaffa.model.remove('[someProp]', parentViewItem);
-            */
-            remove: modelRemove,
-
-            /**
-                ### .isDirty(path, viewItem)
-
-                check if a part of the model is dirty.
-                path is relative to the viewItems path.
-
-                    gaffa.model.isDirty('[someProp]', viewItem); // true/false?
-            */
-            isDirty: modelIsDirty,
-
-            /**
-                ### .setDirtyState(path, value, viewItem)
-
-                set a part of the model to be dirty or not.
-                path is relative to the viewItems path.
-
-                    gaffa.model.setDirtyState('[someProp]', true, viewItem);
-            */
-            setDirtyState: modelSetDirtyState
-        },
-
-        /**
-            ## .views
-
-                gaffa.views //Object.
-
-            contains functions and properties for manipulating the application's views.
-        */
-        views: {
-
-            /**
-                ### .renderTarget
-
-                Overrideable DOM selector that top level view items will be inserted into.
-
-                    gaffa.views.renderTarget = 'body';
-            */
-            renderTarget: 'body',
-
-            /**
-                ### .add(View/viewModel, insertIndex)
-
-                Add a view or views to the root list of viewModels.
-                When a view is added, it will be rendered _bound, and inserted into the DOM.
-
-                    gaffa.views.add(myView);
-
-                Or:
-
-                    gaffa.views.add([
-                        myView1,
-                        myView1,
-                        myView1
-                    ]);
-            */
-            add: function(view, insertIndex){
-                if(Array.isArray(view)){
-                    for(var i = 0; i < view.length; i++) {
-                        gaffa.views.add(view[i]);
-                    }
-                    return;
-                }
-
-                view.gaffa = gaffa;
-                view.parentContainer = internalViewItems;
-                view.render();
-                view.renderedElement.viewModel = view;
-                view.bind();
-                view.insert(internalViewItems, insertIndex);
-            },
-
-            /**
-                ### .remove(view/views)
-
-                Remove a view or views from anywhere in the application.
-
-                    gaffa.views.remove(myView);
-            */
-            remove: removeViews,
-
-            /**
-                ### .empty()
-
-                empty the application of all views.
-
-                    gaffa.views.empty();
-            */
-            empty: function(){
-                removeViews(internalViewItems);
-            },
-
-            _constructors: {}
-        },
-
-        /**
-            ## .actions
-
-                gaffa.actions //Object.
-
-            contains functions and properties for manipulating the application's actions.
-        */
-        actions: {
-
-            /**
-                ### .trigger(actions, parent, scope, event)
-
-                trigger a gaffa action where:
-
-                 - actions is an array of actions to trigger.
-                 - parent is an instance of ViewItem that the action is on.
-                 - scope is an arbitrary object to be passed in as scope to all expressions in the action
-                 - event is an arbitrary event object that may have triggered the action, such as a DOM event.
-            */
-            trigger: Action.trigger,
-
-            _constructors: {}
-        },
-
-        /**
-            ## .behaviours
-
-                gaffa.behaviours //Object.
-
-            contains functions and properties for manipulating the application's behaviours.
-        */
-        behaviours: {
-            _constructors: {}
-        },
-
-        utils: {
-            // Get a deep property on an object without doing if(obj && obj.prop && obj.prop.prop) etc...
-            getProp: function (object, propertiesString) {
-                var properties = propertiesString.split(Gaffa.pathSeparator).reverse();
-                while (properties.length) {
-                    var nextProp = properties.pop();
-                    if (object[nextProp] !== undefined && object[nextProp] !== null) {
-                        object = object[nextProp];
-                    } else {
-                        return;
-                    }
-                }
-                return object;
-            },
-            // See if a property exists on an object without doing if(obj && obj.prop && obj.prop.prop) etc...
-            propExists: function (object, propertiesString) {
-                var properties = propertiesString.split(".").reverse();
-                while (properties.length) {
-                    var nextProp = properties.pop();
-                    if (object[nextProp] !== undefined && object[nextProp] !== null) {
-                        object = object[nextProp];
-                    } else {
-                        return false;
-                    }
-                }
-                return true;
-            }
-        },
-
-        ajax: function(settings){
-            console.warn('Ajax: This API is depricated and will be removed in a later version. Use a standalone module for XHR.');
-
-            var ajax = new (require('simple-ajax'))(settings);
-
-            ajax.on('complete', function(event){
-                var data,
-                    error;
-
-                try{
-                    data = JSON.parse(event.target.responseText);
-                }catch(error){
-                    error = error;
-                }
-
-                if(event.status <200 || event.status > 400){
-                    error = data || error;
-                }
-
-                !error && settings.success && settings.success(data);
-                error && settings.error && settings.error(error);
-                settings.complete && settings.complete(event);
-            });
-
-            ajax.send();
-        },
-        merge: merge,
-        clone: clone,
-        getClosestItem: getClosestItem,
-        browser: require('bowser')
+        }
     };
 
-    merge(gaffa, gaffaPublicObject);
+    /**
+        ## .model
 
-    return gaffa;
+        access to the applications model
+    */
+    this.model = {
+
+        /**
+            ### .get(path, viewItem, scope, asTokens)
+
+            used to get data from the model.
+            path is relative to the viewItems path.
+
+                gaffa.model.get('[someProp]', parentViewItem);
+        */
+        get: modelGet,
+
+        /**
+            ### .set(path, value, viewItem, dirty)
+
+            used to set data into the model.
+            path is relative to the viewItems path.
+
+                gaffa.model.set('[someProp]', 'hello', parentViewItem);
+        */
+        set: modelSet,
+
+        /**
+            ### .remove(path, viewItem, dirty)
+
+            used to remove data from the model.
+            path is relative to the viewItems path.
+
+                gaffa.model.remove('[someProp]', parentViewItem);
+        */
+        remove: modelRemove,
+
+        /**
+            ### .isDirty(path, viewItem)
+
+            check if a part of the model is dirty.
+            path is relative to the viewItems path.
+
+                gaffa.model.isDirty('[someProp]', viewItem); // true/false?
+        */
+        isDirty: modelIsDirty,
+
+        /**
+            ### .setDirtyState(path, value, viewItem)
+
+            set a part of the model to be dirty or not.
+            path is relative to the viewItems path.
+
+                gaffa.model.setDirtyState('[someProp]', true, viewItem);
+        */
+        setDirtyState: modelSetDirtyState
+    };
+
+    /**
+        ## .views
+
+            gaffa.views // ViewContainer.
+
+        the Gaffa instances top viewContainer.
+    */
+    this.views = rootViewContainer;
+
+    /**
+        ## .actions
+
+            gaffa.actions // Object.
+
+        contains functions and properties for manipulating the application's actions.
+    */
+    this.actions = {
+
+        /**
+            ### .trigger(actions, parent, scope, event)
+
+            trigger a gaffa action where:
+
+             - actions is an array of actions to trigger.
+             - parent is an instance of ViewItem that the action is on.
+             - scope is an arbitrary object to be passed in as scope to all expressions in the action
+             - event is an arbitrary event object that may have triggered the action, such as a DOM event.
+        */
+        trigger: Action.trigger,
+
+    };
+    this._constructors = {
+        views: {},
+        actions: {},
+        behaviours: {}
+    };
 }
+Gaffa.prototype = Object.create(EventEmitter.prototype);
+Gaffa.prototype.constructor = Gaffa;
+Gaffa.prototype.merge = merge;
+Gaffa.prototype.clone = clone;
+Gaffa.prototype.getClosestItem = getClosestItem;
+Gaffa.prototype.browser = require('bowser');
+Gaffa.prototype.ajax = function(settings){
+    console.warn('Ajax: This API is depricated and will be removed in a later version. Use a standalone module for XHR.');
+
+    var ajax = new (require('simple-ajax'))(settings);
+
+    ajax.on('complete', function(event){
+        var data,
+            error;
+
+        try{
+            data = JSON.parse(event.target.responseText);
+        }catch(error){
+            error = error;
+        }
+
+        if(event.status <200 || event.status > 400){
+            error = data || error;
+        }
+
+        !error && settings.success && settings.success(data);
+        error && settings.error && settings.error(error);
+        settings.complete && settings.complete(event);
+    });
+
+    ajax.send();
+};
+Gaffa.prototype.utils = {
+    // Get a deep property on an object without doing if(obj && obj.prop && obj.prop.prop) etc...
+    getProp: function (object, propertiesString) {
+        var properties = propertiesString.split(Gaffa.pathSeparator).reverse();
+        while (properties.length) {
+            var nextProp = properties.pop();
+            if (object[nextProp] !== undefined && object[nextProp] !== null) {
+                object = object[nextProp];
+            } else {
+                return;
+            }
+        }
+        return object;
+    },
+    // See if a property exists on an object without doing if(obj && obj.prop && obj.prop.prop) etc...
+    propExists: function (object, propertiesString) {
+        var properties = propertiesString.split(".").reverse();
+        while (properties.length) {
+            var nextProp = properties.pop();
+            if (object[nextProp] !== undefined && object[nextProp] !== null) {
+                object = object[nextProp];
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
+};
+
+/**
+    ### .initialiseViewItem
+
+    takes the plain old object representation of a viewItem and returns an instance of ViewItem with all the settings applied.
+
+    Also recurses through the ViewItem's tree and inflates children.
+*/
+Gaffa.prototype.initialiseViewItem = function(viewItem, specCollection, references){
+    return initialiseViewItem(viewItem, this, specCollection, references);
+};
+
+Gaffa.prototype.initialiseView = function(view, references){
+    return initialiseView(view, this, references);
+};
+
+Gaffa.prototype.initialiseAction = function(action, references){
+    return initialiseAction(action, this, references);
+};
+
+Gaffa.prototype.initialiseBehaviour = function(behaviour, references){
+    return initialiseBehaviour(behaviour, this, references);
+};
+
+Gaffa.prototype.registerConstructor = function(constructor){
+    if(Array.isArray(constructor)){
+        for(var i = 0; i < constructor.length; i++){
+            this.registerConstructor(constructor[i]);
+        }
+    }
+
+    var constructorType = constructor.prototype instanceof View && 'views' ||
+        constructor.prototype instanceof Action && 'actions' ||
+        constructor.prototype instanceof Behaviour && 'behaviours';
+
+    if(constructorType){
+        // ToDo: Deprecate .type
+        this._constructors[constructorType][constructor.prototype._type || constructor.prototype.type] = constructor;
+    }else{
+        throw "The provided constructor was not an instance of a View, Action, or Behaviour" +
+            "\n This is likely due to having two version of Gaffa installed" +
+            "\n Run 'npm ls gaffa' to check, and 'npm dedupe to fix'";
+    }
+};
+
+/**
+    ### .createSpec
+
+        function myConstructor(){}
+        myConstructor = gaffa.createSpec(myConstructor, inheritedConstructor);
+
+    npm module: [spec-js](https://npmjs.org/package/spec-js)
+*/
+Gaffa.prototype.createSpec = createSpec;
+
+/**
+    ### .jsonConverter
+
+    default jsonification for ViewItems
+*/
+Gaffa.prototype.jsonConverter = jsonConverter;
 
 
 // "constants"
@@ -1788,7 +1821,7 @@ module.exports = Gaffa;
 
 ///[license.md]
 
-},{"./action":12,"./behaviour":13,"./containerView":15,"./getClosestItem":18,"./initialiseAction":19,"./initialiseBehaviour":20,"./initialiseView":21,"./initialiseViewItem":22,"./jsonConverter":23,"./property":51,"./removeViews":53,"./resolvePath":54,"./view":55,"./viewContainer":56,"./viewItem":57,"bowser":24,"doc-js":28,"events":76,"gedi":33,"merge":44,"simple-ajax":65,"spec-js":45,"statham":69}],18:[function(require,module,exports){
+},{"./action":"/home/kory/dev/gaffa-frame/node_modules/gaffa/action.js","./behaviour":"/home/kory/dev/gaffa-frame/node_modules/gaffa/behaviour.js","./containerView":"/home/kory/dev/gaffa-frame/node_modules/gaffa/containerView.js","./getClosestItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/getClosestItem.js","./initialiseAction":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseAction.js","./initialiseBehaviour":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseBehaviour.js","./initialiseView":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseView.js","./initialiseViewItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseViewItem.js","./jsonConverter":"/home/kory/dev/gaffa-frame/node_modules/gaffa/jsonConverter.js","./property":"/home/kory/dev/gaffa-frame/node_modules/gaffa/property.js","./removeViews":"/home/kory/dev/gaffa-frame/node_modules/gaffa/removeViews.js","./resolvePath":"/home/kory/dev/gaffa-frame/node_modules/gaffa/resolvePath.js","./view":"/home/kory/dev/gaffa-frame/node_modules/gaffa/view.js","./viewContainer":"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewContainer.js","./viewItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewItem.js","bowser":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/bowser/bowser.js","doc-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/fluent.js","events":"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/events/events.js","gedi":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/gedi.js","merge":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/merge/merge.js","simple-ajax":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/simple-ajax/index.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js","statham":"/home/kory/dev/gaffa-frame/node_modules/statham/statham.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/getClosestItem.js":[function(require,module,exports){
 function getClosestItem(target){
 	if(!target){
 		return;
@@ -1808,31 +1841,33 @@ function getClosestItem(target){
 }
 
 module.exports = getClosestItem;
-},{"./bindable":14}],19:[function(require,module,exports){
+},{"./bindable":"/home/kory/dev/gaffa-frame/node_modules/gaffa/bindable.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/includeProps.js":[function(require,module,exports){
+module.exports = ["type", "_type"];
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseAction.js":[function(require,module,exports){
 var initialiseViewItem = require('./initialiseViewItem');
 
 function initialiseAction(viewItem, gaffa, references) {
-    return initialiseViewItem(viewItem, gaffa, gaffa.actions._constructors, references);
+    return initialiseViewItem(viewItem, gaffa, gaffa._constructors.actions, references);
 }
 
 module.exports = initialiseAction;
-},{"./initialiseViewItem":22}],20:[function(require,module,exports){
+},{"./initialiseViewItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseViewItem.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseBehaviour.js":[function(require,module,exports){
 var initialiseViewItem = require('./initialiseViewItem');
 
 function initialiseBehaviour(viewItem, gaffa, references) {
-    return initialiseViewItem(viewItem, gaffa, gaffa.behaviours._constructors, references);
+    return initialiseViewItem(viewItem, gaffa, gaffa._constructors.behaviours, references);
 }
 
 module.exports = initialiseBehaviour;
-},{"./initialiseViewItem":22}],21:[function(require,module,exports){
+},{"./initialiseViewItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseViewItem.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseView.js":[function(require,module,exports){
 var initialiseViewItem = require('./initialiseViewItem');
 
 function initialiseView(viewItem, gaffa, references) {
-    return initialiseViewItem(viewItem, gaffa, gaffa.views._constructors, references);
+    return initialiseViewItem(viewItem, gaffa, gaffa._constructors.views, references);
 }
 
 module.exports = initialiseView;
-},{"./initialiseViewItem":22}],22:[function(require,module,exports){
+},{"./initialiseViewItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseViewItem.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseViewItem.js":[function(require,module,exports){
 function initialiseViewItem(viewItem, gaffa, specCollection, references) {
     var ViewItem = require('./viewItem'),
         ViewContainer = require('./viewContainer'),
@@ -1896,14 +1931,14 @@ function initialiseViewItem(viewItem, gaffa, specCollection, references) {
 }
 
 module.exports = initialiseViewItem;
-},{"./initialiseAction":19,"./initialiseBehaviour":20,"./initialiseView":21,"./viewContainer":56,"./viewItem":57}],23:[function(require,module,exports){
-var deepEqual = require('deep-equal');
+},{"./initialiseAction":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseAction.js","./initialiseBehaviour":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseBehaviour.js","./initialiseView":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseView.js","./viewContainer":"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewContainer.js","./viewItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewItem.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/jsonConverter.js":[function(require,module,exports){
+var deepEqual = require('deep-equal'),
+    excludeProps = require('./excludeProps'),
+    includeProps = require('./includeProps');
 
 function jsonConverter(object, exclude, include){
     var plainInstance = new object.constructor(),
-        tempObject = (Array.isArray(object) || object instanceof Array) ? [] : {},
-        excludeProps = ["_trackedListeners", "__iuid", "gaffa", "parent", "parentContainer", "renderedElement", "_removeHandlers", "gediCallbacks", "__super__", "_events", "consuela"],
-        includeProps = ["type", "_type"];
+        tempObject = (Array.isArray(object) || object instanceof Array) ? [] : {};
 
     //console.log(object.constructor.name);
 
@@ -1937,7 +1972,7 @@ function jsonConverter(object, exclude, include){
 }
 
 module.exports = jsonConverter;
-},{"deep-equal":26}],24:[function(require,module,exports){
+},{"./excludeProps":"/home/kory/dev/gaffa-frame/node_modules/gaffa/excludeProps.js","./includeProps":"/home/kory/dev/gaffa-frame/node_modules/gaffa/includeProps.js","deep-equal":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/deep-equal/index.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/bowser/bowser.js":[function(require,module,exports){
 /*!
   * Bowser - a browser detector
   * https://github.com/ded/bowser
@@ -1946,7 +1981,7 @@ module.exports = jsonConverter;
 
 !function (name, definition) {
   if (typeof module != 'undefined' && module.exports) module.exports['browser'] = definition()
-  else if (typeof define == 'function') define(definition)
+  else if (typeof define == 'function' && define.amd) define(definition)
   else this[name] = definition()
 }('bowser', function () {
   /**
@@ -2148,7 +2183,8 @@ module.exports = jsonConverter;
         (result.firefox && result.version >= 20.0) ||
         (result.safari && result.version >= 6) ||
         (result.opera && result.version >= 10.0) ||
-        (result.ios && result.osversion && result.osversion.split(".")[0] >= 6)
+        (result.ios && result.osversion && result.osversion.split(".")[0] >= 6) ||
+        (result.blackberry && result.version >= 10.1)
         ) {
       result.a = t;
     }
@@ -2178,7 +2214,7 @@ module.exports = jsonConverter;
   return bowser
 });
 
-},{}],25:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/consuela/index.js":[function(require,module,exports){
 function getListenerMethod(emitter, methodNames){
     if(typeof methodNames === 'string'){
         methodNames = methodNames.split(' ');
@@ -2288,7 +2324,7 @@ Consuela.prototype.watch = function(emitter, onName, offName){
 };
 
 module.exports = Consuela;
-},{}],26:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/deep-equal/index.js":[function(require,module,exports){
 var pSlice = Array.prototype.slice;
 var Object_keys = typeof Object.keys === 'function'
     ? Object.keys
@@ -2374,17 +2410,664 @@ function objEquiv(a, b) {
   return true;
 }
 
-},{}],27:[function(require,module,exports){
-module.exports=require(6)
-},{"./getTarget":29,"./getTargets":30,"./isList":31,"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/doc.js":6}],28:[function(require,module,exports){
-module.exports=require(7)
-},{"./doc":27,"./getTargets":30,"./isList":31,"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/fluent.js":7}],29:[function(require,module,exports){
-module.exports=require(8)
-},{"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/getTarget.js":8}],30:[function(require,module,exports){
-module.exports=require(9)
-},{"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/getTargets.js":9}],31:[function(require,module,exports){
-module.exports=require(10)
-},{"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/node_modules/gaffa-formelement/node_modules/doc-js/isList.js":10}],32:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/doc.js":[function(require,module,exports){
+var doc = {
+    document: typeof document !== 'undefined' ? document : null,
+    setDocument: function(d){
+        this.document = d;
+    }
+};
+
+var arrayProto = [],
+    isList = require('./isList');
+    getTargets = require('./getTargets')(doc.document),
+    getTarget = require('./getTarget')(doc.document),
+    space = ' ';
+
+
+///[README.md]
+
+function isIn(array, item){
+    for(var i = 0; i < array.length; i++) {
+        if(item === array[i]){
+            return true;
+        }
+    }
+}
+
+/**
+
+    ## .find
+
+    finds elements that match the query within the scope of target
+
+        //fluent
+        doc(target).find(query);
+
+        //legacy
+        doc.find(target, query);
+*/
+
+function find(target, query){
+    target = getTargets(target);
+    if(query == null){
+        return target;
+    }
+
+    if(isList(target)){
+        var results = [];
+        for (var i = 0; i < target.length; i++) {
+            var subResults = doc.find(target[i], query);
+            for(var j = 0; j < subResults.length; j++) {
+                if(!isIn(results, subResults[j])){
+                    results.push(subResults[j]);
+                }
+            }
+        }
+        return results;
+    }
+
+    return target ? target.querySelectorAll(query) : [];
+};
+
+/**
+
+    ## .findOne
+
+    finds the first element that matches the query within the scope of target
+
+        //fluent
+        doc(target).findOne(query);
+
+        //legacy
+        doc.findOne(target, query);
+*/
+
+function findOne(target, query){
+    target = getTarget(target);
+    if(query == null){
+        return target;
+    }
+
+    if(isList(target)){
+        var result;
+        for (var i = 0; i < target.length; i++) {
+            result = findOne(target[i], query);
+            if(result){
+                break;
+            }
+        }
+        return result;
+    }
+
+    return target ? target.querySelector(query) : null;
+};
+
+/**
+
+    ## .closest
+
+    recurses up the DOM from the target node, checking if the current element matches the query
+
+        //fluent
+        doc(target).closest(query);
+
+        //legacy
+        doc.closest(target, query);
+*/
+
+function closest(target, query){
+    target = getTarget(target);
+
+    if(isList(target)){
+        target = target[0];
+    }
+
+    while(
+        target &&
+        target.ownerDocument &&
+        !is(target, query)
+    ){
+        target = target.parentNode;
+    }
+
+    return target === doc.document && target !== query ? null : target;
+};
+
+/**
+
+    ## .is
+
+    returns true if the target element matches the query
+
+        //fluent
+        doc(target).is(query);
+
+        //legacy
+        doc.is(target, query);
+*/
+
+function is(target, query){
+    target = getTarget(target);
+
+    if(isList(target)){
+        target = target[0];
+    }
+
+    if(!target.ownerDocument || typeof query !== 'string'){
+        return target === query;
+    }
+    return target === query || arrayProto.indexOf.call(find(target.parentNode, query), target) >= 0;
+};
+
+/**
+
+    ## .addClass
+
+    adds classes to the target
+
+        //fluent
+        doc(target).addClass(query);
+
+        //legacy
+        doc.addClass(target, query);
+*/
+
+function addClass(target, classes){
+    target = getTargets(target);
+
+    if(isList(target)){
+        for (var i = 0; i < target.length; i++) {
+            addClass(target[i], classes);
+        }
+        return this;
+    }
+    if(!classes){
+        return this;
+    }
+
+    var classes = classes.split(space),
+        currentClasses = target.classList ? null : target.className.split(space);
+
+    for(var i = 0; i < classes.length; i++){
+        var classToAdd = classes[i];
+        if(!classToAdd || classToAdd === space){
+            continue;
+        }
+        if(target.classList){
+            target.classList.add(classToAdd);
+        } else if(!currentClasses.indexOf(classToAdd)>=0){
+            currentClasses.push(classToAdd);
+        }
+    }
+    if(!target.classList){
+        target.className = currentClasses.join(space);
+    }
+    return this;
+};
+
+/**
+
+    ## .removeClass
+
+    removes classes from the target
+
+        //fluent
+        doc(target).removeClass(query);
+
+        //legacy
+        doc.removeClass(target, query);
+*/
+
+function removeClass(target, classes){
+    target = getTargets(target);
+
+    if(isList(target)){
+        for (var i = 0; i < target.length; i++) {
+            removeClass(target[i], classes);
+        }
+        return this;
+    }
+
+    if(!classes){
+        return this;
+    }
+
+    var classes = classes.split(space),
+        currentClasses = target.classList ? null : target.className.split(space);
+
+    for(var i = 0; i < classes.length; i++){
+        var classToRemove = classes[i];
+        if(!classToRemove || classToRemove === space){
+            continue;
+        }
+        if(target.classList){
+            target.classList.remove(classToRemove);
+            continue;
+        }
+        var removeIndex = currentClasses.indexOf(classToRemove);
+        if(removeIndex >= 0){
+            currentClasses.splice(removeIndex, 1);
+        }
+    }
+    if(!target.classList){
+        target.className = currentClasses.join(space);
+    }
+    return this;
+};
+
+function addEvent(settings){
+    var target = getTarget(settings.target);
+    if(target){
+        target.addEventListener(settings.event, settings.callback, false);
+    }else{
+        console.warn('No elements matched the selector, so no events were bound.');
+    }
+}
+
+/**
+
+    ## .on
+
+    binds a callback to a target when a DOM event is raised.
+
+        //fluent
+        doc(target/proxy).on(events, target[optional], callback);
+
+    note: if a target is passed to the .on function, doc's target will be used as the proxy.
+
+        //legacy
+        doc.on(events, target, query, proxy[optional]);
+*/
+
+function on(events, target, callback, proxy){
+
+    proxy = getTargets(proxy);
+
+    if(!proxy){
+        target = getTargets(target);
+        // handles multiple targets
+        if(isList(target)){
+            var multiRemoveCallbacks = [];
+            for (var i = 0; i < target.length; i++) {
+                multiRemoveCallbacks.push(on(events, target[i], callback, proxy));
+            }
+            return function(){
+                while(multiRemoveCallbacks.length){
+                    multiRemoveCallbacks.pop();
+                }
+            };
+        }
+    }
+
+    // handles multiple proxies
+    // Already handles multiple proxies and targets,
+    // because the target loop calls this loop.
+    if(isList(proxy)){
+        var multiRemoveCallbacks = [];
+        for (var i = 0; i < proxy.length; i++) {
+            multiRemoveCallbacks.push(on(events, target, callback, proxy[i]));
+        }
+        return function(){
+            while(multiRemoveCallbacks.length){
+                multiRemoveCallbacks.pop();
+            }
+        };
+    }
+
+    var removeCallbacks = [];
+
+    if(typeof events === 'string'){
+        events = events.split(space);
+    }
+
+    for(var i = 0; i < events.length; i++){
+        var eventSettings = {};
+        if(proxy){
+            if(proxy === true){
+                proxy = doc.document;
+            }
+            eventSettings.target = proxy;
+            eventSettings.callback = function(event){
+                var closestTarget = closest(event.target, target);
+                if(closestTarget){
+                    callback(event, closestTarget);
+                }
+            };
+        }else{
+            eventSettings.target = target;
+            eventSettings.callback = callback;
+        }
+
+        eventSettings.event = events[i];
+
+        addEvent(eventSettings);
+
+        removeCallbacks.push(eventSettings);
+    }
+
+    return function(){
+        while(removeCallbacks.length){
+            var removeCallback = removeCallbacks.pop();
+            getTarget(removeCallback.target).removeEventListener(removeCallback.event, removeCallback.callback);
+        }
+    }
+};
+
+/**
+
+    ## .off
+
+    removes events assigned to a target.
+
+        //fluent
+        doc(target/proxy).off(events, target[optional], callback);
+
+    note: if a target is passed to the .on function, doc's target will be used as the proxy.
+
+        //legacy
+        doc.off(events, target, callback, proxy);
+*/
+
+function off(events, target, callback, proxy){
+    if(isList(target)){
+        for (var i = 0; i < target.length; i++) {
+            off(events, target[i], callback, proxy);
+        }
+        return this;
+    }
+    if(proxy instanceof Array){
+        for (var i = 0; i < proxy.length; i++) {
+            off(events, target, callback, proxy[i]);
+        }
+        return this;
+    }
+
+    if(typeof events === 'string'){
+        events = events.split(space);
+    }
+
+    if(typeof callback !== 'function'){
+        proxy = callback;
+        callback = null;
+    }
+
+    proxy = proxy ? getTarget(proxy) : doc.document;
+
+    var targets = typeof target === 'string' ? find(target, proxy) : [target];
+
+    for(var targetIndex = 0; targetIndex < targets.length; targetIndex++){
+        var currentTarget = targets[targetIndex];
+
+        for(var i = 0; i < events.length; i++){
+            currentTarget.removeEventListener(events[i], callback);
+        }
+    }
+    return this;
+};
+
+/**
+
+    ## .append
+
+    adds elements to a target
+
+        //fluent
+        doc(target).append(children);
+
+        //legacy
+        doc.append(target, children);
+*/
+
+function append(target, children){
+    var target = getTarget(target),
+        children = getTarget(children);
+
+    if(isList(target)){
+        target = target[0];
+    }
+
+    if(isList(children)){
+        for (var i = 0; i < children.length; i++) {
+            append(target, children[i]);
+        }
+        return;
+    }
+
+    target.appendChild(children);
+};
+
+/**
+
+    ## .prepend
+
+    adds elements to the front of a target
+
+        //fluent
+        doc(target).prepend(children);
+
+        //legacy
+        doc.prepend(target, children);
+*/
+
+function prepend(target, children){
+    var target = getTarget(target),
+        children = getTarget(children);
+
+    if(isList(target)){
+        target = target[0];
+    }
+
+    if(isList(children)){
+        //reversed because otherwise the would get put in in the wrong order.
+        for (var i = children.length -1; i; i--) {
+            prepend(target, children[i]);
+        }
+        return;
+    }
+
+    target.insertBefore(children, target.firstChild);
+};
+
+/**
+
+    ## .isVisible
+
+    checks if an element or any of its parents display properties are set to 'none'
+
+        //fluent
+        doc(target).isVisible();
+
+        //legacy
+        doc.isVisible(target);
+*/
+
+function isVisible(target){
+    var target = getTarget(target);
+    if(!target){
+        return;
+    }
+    if(isList(target)){
+        var i = -1;
+
+        while (target[i++] && isVisible(target[i])) {}
+        return target.length >= i;
+    }
+    while(target.parentNode && target.style.display !== 'none'){
+        target = target.parentNode;
+    }
+
+    return target === doc.document;
+};
+
+
+
+/**
+
+    ## .ready
+
+    call a callback when the document is ready.
+
+        //fluent
+        doc().ready(callback);
+
+        //legacy
+        doc.ready(callback);
+*/
+
+function ready(target, callback){
+    if(typeof target === 'function' && !callback){
+        callback = target;
+    }
+    if(doc.document.body){
+        callback();
+    }else{
+        doc.on('load', window, function(){
+            callback();
+        });
+    }
+};
+
+doc.find = find;
+doc.findOne = findOne;
+doc.closest = closest;
+doc.is = is;
+doc.addClass = addClass;
+doc.removeClass = removeClass;
+doc.off = off;
+doc.on = on;
+doc.append = append;
+doc.prepend = prepend;
+doc.isVisible = isVisible;
+doc.ready = ready;
+
+module.exports = doc;
+},{"./getTarget":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/getTarget.js","./getTargets":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/getTargets.js","./isList":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/isList.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/fluent.js":[function(require,module,exports){
+var doc = require('./doc'),
+    isList = require('./isList'),
+    getTargets = require('./getTargets')(doc.document),
+    flocProto = [];
+
+function Floc(items){
+    this.push.apply(this, items);
+}
+Floc.prototype = flocProto;
+flocProto.constructor = Floc;
+
+function floc(target){
+    var instance = getTargets(target);
+
+    if(!isList(instance)){
+        if(instance){
+            instance = [instance];
+        }else{
+            instance = [];
+        }
+    }
+    return new Floc(instance);
+}
+
+var returnsSelf = 'addClass removeClass append prepend'.split(' ');
+
+for(var key in doc){
+    if(typeof doc[key] === 'function'){
+        floc[key] = doc[key];
+        flocProto[key] = (function(key){
+            var instance = this;
+            // This is also extremely dodgy and fast
+            return function(a,b,c,d,e,f){
+                var result = doc[key](this, a,b,c,d,e,f);
+
+                if(result !== doc && isList(result)){
+                    return floc(result);
+                }
+                if(returnsSelf.indexOf(key) >=0){
+                    return instance;
+                }
+                return result;
+            };
+        }(key));
+    }
+}
+flocProto.on = function(events, target, callback){
+    var proxy = this;
+    if(typeof target === 'function'){
+        callback = target;
+        target = this;
+        proxy = null;
+    }
+    doc.on(events, target, callback, proxy);
+    return this;
+};
+
+flocProto.off = function(events, target, callback){
+    var reference = this;
+    if(typeof target === 'function'){
+        callback = target;
+        target = this;
+        reference = null;
+    }
+    doc.off(events, target, callback, reference);
+    return this;
+};
+
+flocProto.addClass = function(className){
+    doc.addClass(this, className);
+    return this;
+};
+
+flocProto.removeClass = function(className){
+    doc.removeClass(this, className);
+    return this;
+};
+
+module.exports = floc;
+},{"./doc":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/doc.js","./getTargets":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/getTargets.js","./isList":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/isList.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/getTarget.js":[function(require,module,exports){
+var singleId = /^#\w+$/;
+
+module.exports = function(document){
+    return function getTarget(target){
+        if(typeof target === 'string'){
+            if(singleId.exec(target)){
+                return document.getElementById(target.slice(1));
+            }
+            return document.querySelector(target);
+        }
+
+        return target;
+    };
+};
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/getTargets.js":[function(require,module,exports){
+
+var singleClass = /^\.\w+$/,
+    singleId = /^#\w+$/,
+    singleTag = /^\w+$/;
+
+module.exports = function(document){
+    return function getTargets(target){
+        if(typeof target === 'string'){
+            if(singleId.exec(target)){
+                // If you have more than 1 of the same id in your page,
+                // thats your own stupid fault.
+                return [document.getElementById(target.slice(1))];
+            }
+            if(singleTag.exec(target)){
+                return document.getElementsByTagName(target);
+            }
+            if(singleClass.exec(target)){
+                return document.getElementsByClassName(target.slice(1));
+            }
+            return document.querySelectorAll(target);
+        }
+
+        return target;
+    };
+};
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/isList.js":[function(require,module,exports){
+module.exports = function isList(object){
+    return object != null && typeof object === 'object' && 'length' in object && !('nodeType' in object) && object.self !== object;
+}
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/events.js":[function(require,module,exports){
 var WeakMap = require('./weakmap'),
     paths = require('gedi-paths'),
     pathConstants = paths.constants
@@ -2742,8 +3425,12 @@ module.exports = function(modelGet, gel, PathToken){
             return;
         }
 
-        for(var key in object){
-            var prop = object[key];
+        addModelReference(object.constructor.prototype);
+        var keys = Object.keys(object);
+
+        for(var i = 0; i < keys.length; i++){
+            var key = keys[i],
+                prop = object[key];
 
             // Faster to check again here than to create pointless paths.
             if(prop && typeof prop === 'object'){
@@ -2796,7 +3483,7 @@ module.exports = function(modelGet, gel, PathToken){
         removeModelReference: removeModelReference
     };
 };
-},{"./modelOperations":34,"./weakmap":40,"gedi-paths":36}],33:[function(require,module,exports){
+},{"./modelOperations":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/modelOperations.js","./weakmap":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/weakmap.js","gedi-paths":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/gedi-paths/paths.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/gedi.js":[function(require,module,exports){
 //Copyright (C) 2012 Kory Nunn
 
 //Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
@@ -3403,7 +4090,7 @@ function newGedi(model) {
 }
 
 module.exports = gediConstructor;
-},{"./events":32,"./modelOperations":34,"./pathToken":39,"gedi-paths":36,"gel-js":58,"spec-js":45}],34:[function(require,module,exports){
+},{"./events":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/events.js","./modelOperations":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/modelOperations.js","./pathToken":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/pathToken.js","gedi-paths":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/gedi-paths/paths.js","gel-js":"/home/kory/dev/gaffa-frame/node_modules/gel-js/gel.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/modelOperations.js":[function(require,module,exports){
 var paths = require('gedi-paths'),
     memoiseCache = {};
 
@@ -3540,7 +4227,7 @@ module.exports = {
     get: get,
     set: set
 };
-},{"gedi-paths":36}],35:[function(require,module,exports){
+},{"gedi-paths":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/gedi-paths/paths.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/gedi-paths/detectPath.js":[function(require,module,exports){
 module.exports = function detectPath(substring){
     if (substring.charAt(0) === '[') {
         var index = 1;
@@ -3559,7 +4246,7 @@ module.exports = function detectPath(substring){
         } while (index < substring.length);
     }
 };
-},{}],36:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/gedi-paths/paths.js":[function(require,module,exports){
 var detectPath = require('./detectPath');
 
 var pathSeparator = "/",
@@ -3783,10 +4470,7 @@ function isPath(path) {
     if(!(typeof path === 'string' || (path instanceof String))){
         return;
     }
-    var match = path.match(/\[.*?(?:\\\])*(?:\\\[)*\]/g);
-    if(match && match.length === 1 && match[0] === path){
-        return true;
-    }
+    return !!path.match(/^\[(?:[^\[\]]|\\.)*\]$/);
 }
 
 function isPathAbsolute(path){
@@ -3833,7 +4517,7 @@ module.exports = {
         wildcard: pathWildcard
     }
 };
-},{"./detectPath":35}],37:[function(require,module,exports){
+},{"./detectPath":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/gedi-paths/detectPath.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/leak-map/index.js":[function(require,module,exports){
 function validateKey(key){
     if(!key || !(typeof key === 'object' || typeof key === 'function')){
         throw key + " is not a valid WeakMap key.";
@@ -3879,7 +4563,7 @@ LeakMap.prototype.toString = function(){
 };
 
 module.exports = LeakMap;
-},{}],38:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/weak-map/weak-map.js":[function(require,module,exports){
 // Copyright (C) 2011 Google Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -4566,7 +5250,7 @@ module.exports = LeakMap;
   }
 })();
 
-},{}],39:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/pathToken.js":[function(require,module,exports){
 var Lang = require('lang-js'),
     Token = Lang.Token,
     paths = require('gedi-paths'),
@@ -4599,7 +5283,7 @@ module.exports = function(get, model){
 
     return PathToken;
 }
-},{"gedi-paths":36,"gedi-paths/detectPath":35,"lang-js":42,"spec-js":45}],40:[function(require,module,exports){
+},{"gedi-paths":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/gedi-paths/paths.js","gedi-paths/detectPath":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/gedi-paths/detectPath.js","lang-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/lang-js/lang.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/weakmap.js":[function(require,module,exports){
 var WM;
 
 if(typeof WeakMap !== 'undefined'){
@@ -4617,7 +5301,7 @@ if(typeof WeakMap !== 'undefined'){
 WM || (WM = require('weak-map'));
 
 module.exports = WM;
-},{"leak-map":37,"weak-map":38}],41:[function(require,module,exports){
+},{"leak-map":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/leak-map/index.js","weak-map":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/weak-map/weak-map.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/laidout/index.js":[function(require,module,exports){
 function checkElement(element){
     if(!element){
         return false;
@@ -4646,7 +5330,7 @@ module.exports = function laidout(element, callback){
 
     document.addEventListener('DOMNodeInserted', recheckElement);
 };
-},{}],42:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/lang-js/lang.js":[function(require,module,exports){
 (function (process){
 var Token = require('./token');
 
@@ -5047,7 +5731,7 @@ Lang.Token = Token;
 
 module.exports = Lang;
 }).call(this,require('_process'))
-},{"./token":43,"_process":77}],43:[function(require,module,exports){
+},{"./token":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/lang-js/token.js","_process":"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/process/browser.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/lang-js/token.js":[function(require,module,exports){
 function Token(substring, length){
     this.original = substring;
     this.length = length;
@@ -5059,7 +5743,7 @@ Token.prototype.valueOf = function(){
 }
 
 module.exports = Token;
-},{}],44:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/merge/merge.js":[function(require,module,exports){
 /*!
  * @name JavaScript/NodeJS Merge v1.2.0
  * @author yeikos
@@ -5235,16 +5919,164 @@ module.exports = Token;
 	}
 
 })(typeof module === 'object' && module && typeof module.exports === 'object' && module.exports);
-},{}],45:[function(require,module,exports){
-Object.create = Object.create || function (o) {
-    if (arguments.length > 1) {
-        throw new Error('Object.create implementation only accepts the first parameter.');
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/simple-ajax/index.js":[function(require,module,exports){
+var EventEmitter = require('events').EventEmitter;
+
+function tryParseJson(data){
+    try{
+        return JSON.parse(data);
+    }catch(error){
+        return error;
     }
-    function F() {}
-    F.prototype = o;
-    return new F();
+}
+
+function parseQueryString(url){
+    var urlParts = url.split('?'),
+        result = {};
+
+    if(urlParts.length>1){
+
+        var queryStringData = urlParts.pop().split("&");
+
+        for(var i = 0; i < queryStringData.length; i++) {
+            var parts = queryStringData[i].split("="),
+                key = window.unescape(parts[0]),
+                value = window.unescape(parts[1]);
+
+            result[key] = value;
+        }
+    }
+
+    return result;
+}
+
+function toQueryString(data){
+    var queryString = '';
+
+    for(var key in data){
+        if(data.hasOwnProperty(key) && data[key] !== undefined){
+            queryString += (queryString.length ? '&' : '?') + key + '=' + data[key];
+        }
+    }
+
+    return queryString;
+}
+
+function Ajax(settings){
+    var queryStringData,
+        ajax = this;
+
+    if(typeof settings === 'string'){
+        settings = {
+            url: settings
+        };
+    }
+
+    if(typeof settings !== 'object'){
+        settings = {};
+    }
+
+    ajax.settings = settings;
+    ajax.request = new window.XMLHttpRequest();
+    ajax.settings.method = ajax.settings.method || "get";
+
+    if(ajax.settings.cors){
+        //http://www.html5rocks.com/en/tutorials/cors/
+        if ("withCredentials" in ajax.request) {
+            // all good.
+
+        } else if (typeof XDomainRequest != "undefined") {
+            // Otherwise, check if XDomainRequest.
+            // XDomainRequest only exists in IE, and is IE's way of making CORS requests.
+            ajax.request = new window.XDomainRequest();
+        } else {
+            // Otherwise, CORS is not supported by the browser.
+            ajax.emit('error', new Error('Cors is not supported by this browser'));
+        }
+    }else{
+        ajax.request = new window.XMLHttpRequest();
+    }
+
+    if(ajax.settings.cache === false){
+        ajax.settings.data = ajax.settings.data || {};
+        ajax.settings.data._ = new Date().getTime();
+    }
+
+    if(ajax.settings.method.toLowerCase() === 'get' && typeof ajax.settings.data === 'object'){
+        queryStringData = parseQueryString(ajax.settings.url);
+        for(var key in ajax.settings.data){
+            if(ajax.settings.data.hasOwnProperty(key)){
+                queryStringData[key] = ajax.settings.data[key];
+            }
+        }
+
+        ajax.settings.url  = ajax.settings.url.split('?').shift() + toQueryString(queryStringData);
+        ajax.settings.data = null;
+    }
+
+    ajax.request.addEventListener("progress", function(event){
+        ajax.emit('progress', event);
+    }, false);
+
+    ajax.request.addEventListener("load", function(event){
+        var data = event.target.responseText;
+
+        if(ajax.settings.dataType && ajax.settings.dataType.toLowerCase() === 'json'){
+            if(data === ''){
+                data = undefined;
+            }else{
+                data = tryParseJson(data);
+            }
+        }
+
+        if(event.target.status >= 400){
+            ajax.emit('error', event, data);
+        } else {
+            ajax.emit('success', event, data);
+        }
+
+    }, false);
+
+    ajax.request.addEventListener("error", function(event){
+        ajax.emit('error', event);
+    }, false);
+
+    ajax.request.addEventListener("abort", function(event){
+        ajax.emit('abort', event);
+    }, false);
+
+    ajax.request.addEventListener("loadend", function(event){
+        ajax.emit('complete', event);
+    }, false);
+
+    ajax.request.open(ajax.settings.method || "get", ajax.settings.url, true);
+
+    // Set default headers
+    if(ajax.settings.contentType !== false){
+        ajax.request.setRequestHeader('Content-Type', ajax.settings.contentType || 'application/json; charset=utf-8');
+    }
+    ajax.request.setRequestHeader('X-Requested-With', ajax.settings.requestedWith || 'XMLHttpRequest');
+    if(ajax.settings.auth){
+        ajax.request.setRequestHeader('Authorization', ajax.settings.auth);
+    }
+
+    // Set custom headers
+    for(var headerKey in ajax.settings.headers){
+        ajax.request.setRequestHeader(headerKey, ajax.settings.headers[headerKey]);
+    }
+
+    if(ajax.settings.processData !== false && ajax.settings.dataType === 'json'){
+        ajax.settings.data = JSON.stringify(ajax.settings.data);
+    }
+}
+
+Ajax.prototype = Object.create(EventEmitter.prototype);
+Ajax.prototype.send = function(){
+    this.request.send(this.settings.data && this.settings.data);
 };
 
+module.exports = Ajax;
+},{"events":"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/events/events.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js":[function(require,module,exports){
 function createSpec(child, parent){
     var parentPrototype;
 
@@ -5273,7 +6105,7 @@ function createSpec(child, parent){
 }
 
 module.exports = createSpec;
-},{}],46:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/what-changed/index.js":[function(require,module,exports){
 var clone = require('clone'),
     deepEqual = require('deep-equal');
 
@@ -5333,7 +6165,7 @@ WhatChanged.prototype.update = function(value){
 };
 
 module.exports = WhatChanged;
-},{"clone":47,"deep-equal":48}],47:[function(require,module,exports){
+},{"clone":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/what-changed/node_modules/clone/clone.js","deep-equal":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/what-changed/node_modules/deep-equal/index.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/what-changed/node_modules/clone/clone.js":[function(require,module,exports){
 (function (Buffer){
 'use strict';
 
@@ -5466,7 +6298,7 @@ clone.clonePrototype = function(parent) {
 };
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":72}],48:[function(require,module,exports){
+},{"buffer":"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/buffer/index.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/what-changed/node_modules/deep-equal/index.js":[function(require,module,exports){
 var pSlice = Array.prototype.slice;
 var objectKeys = require('./lib/keys.js');
 var isArguments = require('./lib/is_arguments.js');
@@ -5562,7 +6394,7 @@ function objEquiv(a, b, opts) {
   return true;
 }
 
-},{"./lib/is_arguments.js":49,"./lib/keys.js":50}],49:[function(require,module,exports){
+},{"./lib/is_arguments.js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/what-changed/node_modules/deep-equal/lib/is_arguments.js","./lib/keys.js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/what-changed/node_modules/deep-equal/lib/keys.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/what-changed/node_modules/deep-equal/lib/is_arguments.js":[function(require,module,exports){
 var supportsArgumentsClass = (function(){
   return Object.prototype.toString.call(arguments)
 })() == '[object Arguments]';
@@ -5584,7 +6416,7 @@ function unsupported(object){
     false;
 };
 
-},{}],50:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/what-changed/node_modules/deep-equal/lib/keys.js":[function(require,module,exports){
 exports = module.exports = typeof Object.keys === 'function'
   ? Object.keys : shim;
 
@@ -5595,32 +6427,43 @@ function shim (obj) {
   return keys;
 }
 
-},{}],51:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/property.js":[function(require,module,exports){
 var createSpec = require('spec-js'),
     Bindable = require('./bindable'),
     IdentifierToken = require('gel-js').IdentifierToken,
     jsonConverter = require('./jsonConverter'),
     createModelScope = require('./createModelScope'),
     WhatChanged = require('what-changed'),
-    merge = require('merge'),
+    merge = require('./flatMerge'),
     animationFrame = require('./raf.js'),
     requestAnimationFrame = animationFrame.requestAnimationFrame,
     cancelAnimationFrame = animationFrame.cancelAnimationFrame,
-    resolvePath = require('./resolvePath');
+    resolvePath = require('./resolvePath'),
+    excludeProps = require('./excludeProps'),
+    includeProps = require('./includeProps');
 
 var nextFrame;
+
+function callPropertyUpdate(property){
+    if(property._bound){
+        property.update(property.parent, property.value);
+    }
+    property._queuedForUpdate = false;
+}
+
 function updateFrame() {
     while(nextFrame.length){
-        var property = nextFrame.pop();
-        if(property._bound){
-            property.update(property.parent, property.value);
-        }
-        property._queuedForUpdate = false;
+        callPropertyUpdate(nextFrame.pop());
     }
     nextFrame = null;
 }
 
 function requestUpdate(property){
+    if(property._immediate){
+        callPropertyUpdate(property);
+        return;
+    }
+
     if(!nextFrame){
         nextFrame = [];
 
@@ -5723,10 +6566,23 @@ function createPropertyCallback(property){
 
 
 function Property(propertyDescription){
+    if(!propertyDescription){
+        return this;
+    }
+
     if(typeof propertyDescription === 'function'){
         this.update = propertyDescription;
     }else{
         for(var key in propertyDescription){
+            if(
+                !propertyDescription.hasOwnProperty(key) ||
+                propertyDescription instanceof Property && (
+                    ~propertyDescription.__serialiseExclude__.indexOf(key) || 
+                    ~excludeProps.indexOf(key)
+                )
+            ){
+                continue;
+            }
             this[key] = propertyDescription[key];
         }
     }
@@ -5749,7 +6605,7 @@ Property.prototype.set = function(value, isDirty, scope){
         return;
     }
 
-    scope = merge(false, this.scope, scope);
+    scope = merge(this.scope, scope);
 
     var gaffa = this.gaffa,
         dirty = isDirty;
@@ -5759,7 +6615,7 @@ Property.prototype.set = function(value, isDirty, scope){
     }
 
     if(this.binding){
-        var setValue = this.setTransform ? gaffa.model.get(this.setTransform, this, merge(false, this.scope, {value: value})) : value;
+        var setValue = this.setTransform ? gaffa.model.get(this.setTransform, this, merge(this.scope, {value: value})) : value;
         gaffa.model.set(
             this.binding,
             setValue,
@@ -5780,7 +6636,7 @@ Property.prototype.get = function(scope, asTokens){
         return this.value;
     }
 
-    scope = merge(false, this.scope, scope);
+    scope = merge(this.scope, scope);
 
     if(this.binding){
         var value = this.gaffa.model.get(this.binding, this, scope, asTokens);
@@ -5794,7 +6650,7 @@ Property.prototype.get = function(scope, asTokens){
     }
 };
 Property.prototype.bind = function(parent, scope) {
-    this.scope = merge(false, scope, this.scope);
+    this.scope = merge(scope, this.scope);
 
     Bindable.prototype.bind.apply(this, arguments);
 
@@ -5854,7 +6710,7 @@ Property.prototype.debind = function(){
 Property.prototype.__serialiseExclude__ = ['_lastValue'];
 
 module.exports = Property;
-},{"./bindable":14,"./createModelScope":16,"./jsonConverter":23,"./raf.js":52,"./resolvePath":54,"gel-js":58,"merge":44,"spec-js":45,"what-changed":46}],52:[function(require,module,exports){
+},{"./bindable":"/home/kory/dev/gaffa-frame/node_modules/gaffa/bindable.js","./createModelScope":"/home/kory/dev/gaffa-frame/node_modules/gaffa/createModelScope.js","./excludeProps":"/home/kory/dev/gaffa-frame/node_modules/gaffa/excludeProps.js","./flatMerge":"/home/kory/dev/gaffa-frame/node_modules/gaffa/flatMerge.js","./includeProps":"/home/kory/dev/gaffa-frame/node_modules/gaffa/includeProps.js","./jsonConverter":"/home/kory/dev/gaffa-frame/node_modules/gaffa/jsonConverter.js","./raf.js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/raf.js","./resolvePath":"/home/kory/dev/gaffa-frame/node_modules/gaffa/resolvePath.js","gel-js":"/home/kory/dev/gaffa-frame/node_modules/gel-js/gel.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js","what-changed":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/what-changed/index.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/raf.js":[function(require,module,exports){
 /*
  * raf.js
  * https://github.com/ngryman/raf.js
@@ -5907,7 +6763,7 @@ module.exports = {
     requestAnimationFrame: requestAnimationFrame,
     cancelAnimationFrame: cancelAnimationFrame
 };
-},{}],53:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/removeViews.js":[function(require,module,exports){
 function removeViews(views){
     if(!views){
         return;
@@ -5921,13 +6777,68 @@ function removeViews(views){
 }
 
 module.exports = removeViews;
-},{}],54:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/requestInsersion.js":[function(require,module,exports){
+var insertionRequests,
+    insertionWindow = 1000/480; // Only insert for part of a frame, allow time for other opperations.
+
+var now = typeof performance !== 'undefined' ? performance.now.bind(performance): Date.now.bind(Date);
+
+function updateFrame() {
+    if(!insertionRequests){
+        return;
+    }
+
+    var insertionRequest = insertionRequests[insertionRequests.length-1],
+        startTime = now();
+
+    do{
+        if(!insertionRequests.length){
+            break;
+        }
+
+        if(!insertionRequest.opperations.length){
+            insertionRequests.pop();
+            insertionRequest = insertionRequests[insertionRequests.length-1];
+            continue;
+        }
+
+        var nextOpperation = insertionRequest.opperations.shift();
+        insertionRequest.viewContainer.add(nextOpperation[0], nextOpperation[1]);
+
+    } while((now() - startTime) < insertionWindow);
+
+    if(!insertionRequests.length){
+        insertionRequests = null;
+    }else{
+        requestAnimationFrame(updateFrame);
+    }
+}
+
+function requestInsersion(viewContainer, opperations){
+    var callUpdate;
+    if(!insertionRequests){
+        insertionRequests = [];
+        callUpdate = true;
+    }
+
+    insertionRequests.push({
+        viewContainer: viewContainer,
+        opperations: opperations
+    });
+
+    if(callUpdate){
+        requestAnimationFrame(updateFrame);
+    }
+};
+
+module.exports = requestInsersion;
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/resolvePath.js":[function(require,module,exports){
 module.exports = function resolvePath(viewItem){
     if(viewItem && viewItem.getPath){
         return viewItem.getPath();
     }
 };
-},{}],55:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/view.js":[function(require,module,exports){
 /**
     ## View
 
@@ -6007,6 +6918,9 @@ View = createSpec(View, ViewItem);
 
 function watchElements(view){
     for(var key in view){
+        if(!view.hasOwnProperty(key)){
+            return;
+        }
         if(crel.isElement(view[key])){
             view.consuela.watch(view[key]);
         }
@@ -6047,12 +6961,22 @@ View.prototype.bind = function(parent, scope){
     bindViewEvents(this);
     if(!isRebind){
         this.triggerActions('load');
+
+        var view = this,
+            onDetach = this.detach.bind(this);
+
+        parent.once('detach', onDetach);
+        this.once('destroy', function(){
+            view.parent.removeListener('detach', onDetach);
+        });
     }
     bindBehaviours(this, scope);
 };
 View.prototype.rebind = function(parent, scope){
+    parent = parent || this.parent;
+    scope = scope || this.scope;
     this._rebind = true;
-    this.bind();
+    this.bind(parent, scope);
     this._rebind = null;
 };
 View.prototype.detach = function(){
@@ -6061,6 +6985,7 @@ View.prototype.detach = function(){
 
 View.prototype.remove = function(){
     this.detach();
+    this.emit('detach');
     ViewItem.prototype.remove.call(this);
 }
 
@@ -6098,10 +7023,6 @@ function insert(view, viewContainer, insertIndex){
         laidout(view.renderedElement, function(){
             view.afterInsert();
         });
-    }
-
-    if(viewContainer.indexOf(view) !== insertIndex){
-        viewContainer.splice(insertIndex, 1, view);
     }
 
     view.insertFunction(view.insertSelector || renderTarget, view.renderedElement, insertIndex);
@@ -6149,12 +7070,13 @@ View.prototype.title = new Title();
 View.prototype.insertFunction = insertFunction;
 
 module.exports = View;
-},{"./behaviour":13,"./createModelScope":16,"./getClosestItem":18,"./property":51,"./viewItem":57,"consuela":25,"crel":2,"doc-js":28,"laidout":41,"spec-js":45}],56:[function(require,module,exports){
+},{"./behaviour":"/home/kory/dev/gaffa-frame/node_modules/gaffa/behaviour.js","./createModelScope":"/home/kory/dev/gaffa-frame/node_modules/gaffa/createModelScope.js","./getClosestItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/getClosestItem.js","./property":"/home/kory/dev/gaffa-frame/node_modules/gaffa/property.js","./viewItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewItem.js","consuela":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/consuela/index.js","crel":"/home/kory/dev/gaffa-frame/node_modules/crel/crel.js","doc-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/doc-js/fluent.js","laidout":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/laidout/index.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewContainer.js":[function(require,module,exports){
 var createSpec = require('spec-js'),
     Bindable = require('./bindable'),
     View = require('./view'),
     initialiseViewItem = require('./initialiseViewItem'),
     removeViews = require('./removeViews'),
+    requestInsersion = require('./requestInsersion'),
     arrayProto = Array.prototype;
 
 function ViewContainer(viewContainerDescription){
@@ -6237,41 +7159,11 @@ ViewContainer.prototype.add = function(view, insertIndex){
 };
 
 /*
-    adds 10 (10 is arbitrary) views at a time to the target viewContainer,
-    then queues up another add.
-*/
-function executeDeferredAdd(viewContainer){
-    var currentOpperation = viewContainer._deferredViews.splice(0,10);
-
-    if(!currentOpperation.length){
-        return;
-    }
-
-    for (var i = 0; i < currentOpperation.length; i++) {
-        viewContainer.add(currentOpperation[i][0], currentOpperation[i][1]);
-    };
-    requestAnimationFrame(function(time){
-        executeDeferredAdd(viewContainer);
-    });
-}
-
-/*
-    Adds children to the view container over time, via RAF.
-    Will only begin the render cycle if there are no _deferredViews,
-    because if _deferredViews.length is > 0, the render loop will
-    already be going.
+    Adds children to the view container over time.
 */
 ViewContainer.prototype.deferredAdd = function(view, insertIndex){
-    var viewContainer = this,
-        shouldStart = !this._deferredViews.length;
-
     this._deferredViews.push([view, insertIndex]);
-
-    if(shouldStart){
-        requestAnimationFrame(function(){
-            executeDeferredAdd(viewContainer);
-        });
-    }
+    requestInsersion(this, this._deferredViews);
 };
 
 ViewContainer.prototype.abortDeferredAdd = function(){
@@ -6308,12 +7200,12 @@ ViewContainer.prototype.empty = function(){
 ViewContainer.prototype.__serialiseExclude__ = ['element'];
 
 module.exports = ViewContainer;
-},{"./bindable":14,"./initialiseViewItem":22,"./removeViews":53,"./view":55,"spec-js":45}],57:[function(require,module,exports){
+},{"./bindable":"/home/kory/dev/gaffa-frame/node_modules/gaffa/bindable.js","./initialiseViewItem":"/home/kory/dev/gaffa-frame/node_modules/gaffa/initialiseViewItem.js","./removeViews":"/home/kory/dev/gaffa-frame/node_modules/gaffa/removeViews.js","./requestInsersion":"/home/kory/dev/gaffa-frame/node_modules/gaffa/requestInsersion.js","./view":"/home/kory/dev/gaffa-frame/node_modules/gaffa/view.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js"}],"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewItem.js":[function(require,module,exports){
 var createSpec = require('spec-js'),
     Bindable = require('./bindable'),
     jsonConverter = require('./jsonConverter'),
     Property = require('./property'),
-    merge = require('merge');
+    merge = require('./flatMerge');
 
 function copyProperties(source, target){
     if(
@@ -6366,7 +7258,7 @@ function inflateViewItem(viewItem, description){
                 // actions to trigger when a 'click' event is raised by the views renderedElement
             ];
     */
-    viewItem.actions = viewItem.actions ? clone(viewItem.actions) : {};
+    viewItem.actions = merge(viewItem.actions);
 
     for(var key in description){
         var prop = viewItem[key];
@@ -6420,10 +7312,9 @@ ViewItem = createSpec(ViewItem, Bindable);
 ViewItem.prototype.path = '[]';
 ViewItem.prototype.bind = function(parent, scope){
 
-    var viewItem = this,
-        property;
+    var viewItem = this;
 
-    this.scope = merge(false, scope, this.scope);
+    this.scope = merge(scope, this.scope);
 
     Bindable.prototype.bind.apply(this, arguments);
 
@@ -6434,9 +7325,8 @@ ViewItem.prototype.bind = function(parent, scope){
     // Only set up properties that were on the prototype.
     // Faster and 'safer'
     for(var propertyKey in this.constructor.prototype){
-        property = this[propertyKey];
-        if(property instanceof Property){
-            property.bind(this, this.scope);
+        if(this[propertyKey] instanceof Property){
+            this[propertyKey].bind(this, this.scope);
         }
     }
 
@@ -6461,12 +7351,15 @@ ViewItem.prototype.triggerActions = function(actionName, scope, event){
     if(!this._bound){
         return;
     }
-    scope = merge(false, this.scope, scope);
+    if(!this.actions[actionName] || !this.actions[actionName].length){
+        return;
+    }
+    scope = merge(this.scope, scope);
     this.gaffa.actions.trigger(this.actions[actionName], this, scope, event);
 };
 
 module.exports = ViewItem;
-},{"./bindable":14,"./jsonConverter":23,"./property":51,"./viewContainer":56,"merge":44,"spec-js":45}],58:[function(require,module,exports){
+},{"./bindable":"/home/kory/dev/gaffa-frame/node_modules/gaffa/bindable.js","./flatMerge":"/home/kory/dev/gaffa-frame/node_modules/gaffa/flatMerge.js","./jsonConverter":"/home/kory/dev/gaffa-frame/node_modules/gaffa/jsonConverter.js","./property":"/home/kory/dev/gaffa-frame/node_modules/gaffa/property.js","./viewContainer":"/home/kory/dev/gaffa-frame/node_modules/gaffa/viewContainer.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js"}],"/home/kory/dev/gaffa-frame/node_modules/gel-js/gel.js":[function(require,module,exports){
 var Lang = require('lang-js'),
     paths = require('gedi-paths'),
     merge = require('merge'),
@@ -8011,19 +8904,927 @@ for (var i = 0; i < tokenConverters.length; i++) {
 Gel.Token = Token;
 Gel.Scope = Scope;
 module.exports = Gel;
-},{"gedi-paths":60,"lang-js":61,"merge":63,"spec-js":64}],59:[function(require,module,exports){
-module.exports=require(35)
-},{"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/gedi-paths/detectPath.js":35}],60:[function(require,module,exports){
-module.exports=require(36)
-},{"./detectPath":59,"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/gedi/node_modules/gedi-paths/paths.js":36}],61:[function(require,module,exports){
-module.exports=require(42)
-},{"./token":62,"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/lang-js/lang.js":42,"_process":77}],62:[function(require,module,exports){
-module.exports=require(43)
-},{"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/lang-js/token.js":43}],63:[function(require,module,exports){
-module.exports=require(44)
-},{"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/merge/merge.js":44}],64:[function(require,module,exports){
-module.exports=require(45)
-},{"/home/kory/dev/gaffa-frame/node_modules/gaffa/node_modules/spec-js/spec.js":45}],65:[function(require,module,exports){
+},{"gedi-paths":"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/gedi-paths/paths.js","lang-js":"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/lang-js/lang.js","merge":"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/merge/merge.js","spec-js":"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/spec-js/spec.js"}],"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/gedi-paths/detectPath.js":[function(require,module,exports){
+module.exports = function detectPath(substring){
+    if (substring.charAt(0) === '[') {
+        var index = 1;
+
+        do {
+            if (
+                (substring.charAt(index) === '\\' && substring.charAt(index + 1) === '\\') || // escaped escapes
+                (substring.charAt(index) === '\\' && (substring.charAt(index + 1) === '[' || substring.charAt(index + 1) === ']')) //escaped braces
+            ) {
+                index++;
+            }
+            else if(substring.charAt(index) === ']'){
+                return substring.slice(0, index+1);
+            }
+            index++;
+        } while (index < substring.length);
+    }
+};
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/gedi-paths/paths.js":[function(require,module,exports){
+var detectPath = require('./detectPath');
+
+var pathSeparator = "/",
+    upALevel = "..",
+    bubbleCapture = "...",
+    currentKey = "#",
+    rootPath = "",
+    pathStart = "[",
+    pathEnd = "]",
+    pathWildcard = "*";
+
+function pathToRaw(path) {
+    return path && path.slice(1, -1);
+}
+
+//***********************************************
+//
+//      Raw To Path
+//
+//***********************************************
+
+function rawToPath(rawPath) {
+    return pathStart + (rawPath == null ? '' : rawPath) + pathEnd;
+}
+
+var memoisePathCache = {};
+function resolvePath() {
+    var memoiseKey,
+        pathParts = [];
+
+    for(var argumentIndex = arguments.length; argumentIndex--;){
+        var parts = pathToParts(arguments[argumentIndex]);
+        if(parts){
+            pathParts.unshift.apply(pathParts, parts);
+        }
+        if(isPathAbsolute(arguments[argumentIndex])){
+            break;
+        }
+    }
+
+    memoiseKey = pathParts.join(',');
+
+    if(memoisePathCache[memoiseKey]){
+        return memoisePathCache[memoiseKey];
+    }
+
+    var absoluteParts = [],
+        lastRemoved,
+        pathParts,
+        pathPart;
+
+    for(var pathPartIndex = 0; pathPartIndex < pathParts.length; pathPartIndex++){
+        pathPart = pathParts[pathPartIndex];
+
+        if (pathPart === currentKey) {
+            // Has a last removed? Add it back on.
+            if(lastRemoved != null){
+                absoluteParts.push(lastRemoved);
+                lastRemoved = null;
+            }
+        } else if (pathPart === rootPath) {
+            // Root path? Reset parts to be absolute.
+            absoluteParts = [''];
+
+        } else if (pathPart.slice(-bubbleCapture.length) === bubbleCapture) {
+            // deep bindings
+            if(pathPart !== bubbleCapture){
+                absoluteParts.push(pathPart.slice(0, -bubbleCapture.length));
+            }
+        } else if (pathPart === upALevel) {
+            // Up a level? Remove the last item in absoluteParts
+            lastRemoved = absoluteParts.pop();
+        } else if (pathPart.slice(0,2) === upALevel) {
+            var argument = pathPart.slice(2);
+            //named
+            while(absoluteParts[absoluteParts.length - 1] !== argument){
+                if(absoluteParts.length === 0){
+                    throw "Named path part was not found: '" + pathPart + "', in path: '" + arguments[argumentIndex] + "'.";
+                }
+                lastRemoved = absoluteParts.pop();
+            }
+        } else {
+            // any following valid part? Add it to the absoluteParts.
+            absoluteParts.push(pathPart);
+        }
+    }
+
+    // Convert the absoluteParts to a Path and memoise the result.
+    return memoisePathCache[memoiseKey] = createPath(absoluteParts);
+}
+
+var memoisedPathTokens = {};
+
+function createPath(path){
+
+    if(typeof path === 'number'){
+        path = path.toString();
+    }
+
+    if(path == null){
+        return rawToPath();
+    }
+
+    // passed in an Expression or an 'expression formatted' Path (eg: '[bla]')
+    if (typeof path === "string"){
+
+        if(memoisedPathTokens[path]){
+            return memoisedPathTokens[path];
+        }
+
+        if(path.charAt(0) === pathStart) {
+            var pathString = path.toString(),
+                detectedPath = detectPath(pathString);
+
+            if (detectedPath && detectedPath.length === pathString.length) {
+                return memoisedPathTokens[pathString] = detectedPath;
+            } else {
+                return false;
+            }
+        }else{
+            return createPath(rawToPath(path));
+        }
+    }
+
+    if(path instanceof Array) {
+
+        var parts = [];
+        for (var i = 0; i < path.length; i++) {
+            var pathPart = path[i];
+            pathPart = pathPart.replace(/([\[|\]|\\|\/])/g, '\\$1');
+            parts.push(pathPart);
+        }
+        if(parts.length === 1 && parts[0] === rootPath){
+            return createRootPath();
+        }
+        return rawToPath(parts.join(pathSeparator));
+    }
+}
+
+function createRootPath(){
+    return createPath([rootPath, rootPath]);
+}
+
+function pathToParts(path){
+    var pathType = typeof path;
+
+    if(pathType !== 'string' && pathType !== 'number'){
+        if(Array.isArray(path)){
+            return path;
+        }
+        return;
+    }
+
+    // if we haven't been passed a path, then turn the input into a path
+    if (!isPath(path)) {
+        path = createPath(path);
+        if(path === false){
+            return;
+        }
+    }
+
+    path = path.slice(1,-1);
+
+    if(path === ""){
+        return [];
+    }
+
+    var lastPartIndex = 0,
+        parts,
+        nextChar,
+        currentChar;
+
+    if(path.indexOf('\\') < 0){
+        return path.split(pathSeparator);
+    }
+
+    parts = [];
+
+    for(var i = 0; i < path.length; i++){
+        currentChar = path.charAt(i);
+        if(currentChar === pathSeparator){
+            parts.push(path.slice(lastPartIndex,i));
+            lastPartIndex = i+1;
+        }else if(currentChar === '\\'){
+            nextChar = path.charAt(i+1);
+            if(nextChar === '\\'){
+                path = path.slice(0, i) + path.slice(i + 1);
+            }else if(nextChar === ']' || nextChar === '['){
+                path = path.slice(0, i) + path.slice(i + 1);
+            }else if(nextChar === pathSeparator){
+                parts.push(path.slice(lastPartIndex), i);
+            }
+        }
+    }
+    parts.push(path.slice(lastPartIndex));
+
+    return parts;
+}
+
+function appendPath(){
+    var parts = pathToParts(arguments[0]);
+
+    if(!parts){
+        return;
+    }
+
+    if(isPathRoot(arguments[0])){
+        parts.pop();
+    }
+
+    for (var argumentIndex = 1; argumentIndex < arguments.length; argumentIndex++) {
+        var pathParts = pathToParts(arguments[argumentIndex]);
+
+        pathParts && parts.push.apply(parts, pathParts);
+    }
+
+    return createPath(parts);
+}
+
+function isPath(path) {
+    if(!(typeof path === 'string' || (path instanceof String))){
+        return;
+    }
+    var match = path.match(/\[.*?(?:\\\])*(?:\\\[)*\]/g);
+    if(match && match.length === 1 && match[0] === path){
+        return true;
+    }
+}
+
+function isPathAbsolute(path){
+    var parts = pathToParts(path);
+
+    if(parts == null){
+        return false;
+    }
+
+    return parts[0] === rootPath;
+}
+
+function isPathRoot(path){
+    var parts = pathToParts(path);
+    if(parts == null){
+        return false;
+    }
+    return (isPathAbsolute(parts) && parts[0] === parts[1]) || parts.length === 0;
+}
+
+function isBubbleCapturePath(path){
+    var parts = pathToParts(path),
+        lastPart = parts[parts.length-1];
+    return lastPart && lastPart.slice(-bubbleCapture.length) === bubbleCapture;
+}
+
+module.exports = {
+    resolve: resolvePath,
+    create: createPath,
+    is: isPath,
+    isAbsolute: isPathAbsolute,
+    isRoot: isPathRoot,
+    isBubbleCapture: isBubbleCapturePath,
+    append: appendPath,
+    toParts: pathToParts,
+    createRoot: createRootPath,
+    constants:{
+        separator: pathSeparator,
+        upALevel: upALevel,
+        currentKey: currentKey,
+        root: rootPath,
+        start: pathStart,
+        end: pathEnd,
+        wildcard: pathWildcard
+    }
+};
+},{"./detectPath":"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/gedi-paths/detectPath.js"}],"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/lang-js/lang.js":[function(require,module,exports){
+(function (process){
+var Token = require('./token');
+
+function fastEach(items, callback) {
+    for (var i = 0; i < items.length; i++) {
+        if (callback(items[i], i, items)) break;
+    }
+    return items;
+}
+
+var now;
+
+if(typeof process !== 'undefined' && process.hrtime){
+    now = function(){
+        var time = process.hrtime();
+        return time[0] + time[1] / 1000000;
+    };
+}else if(typeof performance !== 'undefined' && performance.now){
+    now = function(){
+        return performance.now();
+    };
+}else if(Date.now){
+    now = function(){
+        return Date.now();
+    };
+}else{
+    now = function(){
+        return new Date().getTime();
+    };
+}
+
+function callWith(fn, fnArguments, calledToken){
+    if(fn instanceof Token){
+        fn.evaluate(scope);
+        fn = fn.result;
+    }
+    var argIndex = 0,
+        scope = this,
+        args = {
+            callee: calledToken,
+            length: fnArguments.length,
+            raw: function(evaluated){
+                var rawArgs = fnArguments.slice();
+                if(evaluated){
+                    fastEach(rawArgs, function(arg){
+                        if(arg instanceof Token){
+                            arg.evaluate(scope);
+                        }
+                    });
+                }
+                return rawArgs;
+            },
+            getRaw: function(index, evaluated){
+                var arg = fnArguments[index];
+
+                if(evaluated){
+                    if(arg instanceof Token){
+                        arg.evaluate(scope);
+                    }
+                }
+                return arg;
+            },
+            get: function(index){
+                var arg = fnArguments[index];
+
+                if(arg instanceof Token){
+                    arg.evaluate(scope);
+                    return arg.result;
+                }
+                return arg;
+            },
+            hasNext: function(){
+                return argIndex < fnArguments.length;
+            },
+            next: function(){
+                if(!this.hasNext()){
+                    throw "Incorrect number of arguments";
+                }
+                if(fnArguments[argIndex] instanceof Token){
+                    fnArguments[argIndex].evaluate(scope);
+                    return fnArguments[argIndex++].result;
+                }
+                return fnArguments[argIndex++];
+            },
+            all: function(){
+                var allArgs = fnArguments.slice();
+                for(var i = 0; i < allArgs.length; i++){
+                    if(allArgs[i] instanceof Token){
+                        allArgs[i].evaluate(scope)
+                        allArgs[i] = allArgs[i].result;
+                    }
+                }
+                return allArgs;
+            },
+            rest: function(){
+                var allArgs = [];
+                while(this.hasNext()){
+                    allArgs.push(this.next());
+                }
+                return allArgs;
+            },
+            restRaw: function(evaluated){
+                var rawArgs = fnArguments.slice();
+                if(evaluated){
+                    for(var i = argIndex; i < rawArgs.length; i++){
+                        if(rawArgs[i] instanceof Token){
+                            rawArgs[i].evaluate(scope);
+                        }
+                    }
+                }
+                return rawArgs;
+            },
+            slice: function(start, end){
+                return this.all().slice(start, end);
+            },
+            sliceRaw: function(start, end, evaluated){
+                var rawArgs = fnArguments.slice(start, end);
+                if(evaluated){
+                    fastEach(rawArgs, function(arg){
+                        if(arg instanceof Token){
+                            arg.evaluate(scope);
+                        }
+                    });
+                }
+                return rawArgs;
+            }
+        };
+
+    scope._args = args;
+
+    return fn(scope, args);
+}
+
+function Scope(oldScope){
+    this.__scope__ = {};
+    if(oldScope){
+        this.__outerScope__ = oldScope instanceof Scope ? oldScope : {__scope__:oldScope};
+    }
+}
+Scope.prototype.get = function(key){
+    var scope = this;
+    while(scope && !scope.__scope__.hasOwnProperty(key)){
+        scope = scope.__outerScope__;
+    }
+    return scope && scope.__scope__[key];
+};
+Scope.prototype.set = function(key, value, bubble){
+    if(bubble){
+        var currentScope = this;
+        while(currentScope && !(key in currentScope.__scope__)){
+            currentScope = currentScope.__outerScope__;
+        }
+
+        if(currentScope){
+            currentScope.set(key, value);
+        }
+    }
+    this.__scope__[key] = value;
+    return this;
+};
+Scope.prototype.add = function(obj){
+    for(var key in obj){
+        this.__scope__[key] = obj[key];
+    }
+    return this;
+};
+Scope.prototype.isDefined = function(key){
+    if(key in this.__scope__){
+        return true;
+    }
+    return this.__outerScope__ && this.__outerScope__.isDefined(key) || false;
+};
+Scope.prototype.callWith = callWith;
+
+// Takes a start and end regex, returns an appropriate parse function
+function createNestingParser(closeConstructor){
+    return function(tokens, index, parse){
+        var openConstructor = this.constructor,
+            position = index,
+            opens = 1;
+
+        while(position++, position <= tokens.length && opens){
+            if(!tokens[position]){
+                throw "Invalid nesting. No closing token was found";
+            }
+            if(tokens[position] instanceof openConstructor){
+                opens++;
+            }
+            if(tokens[position] instanceof closeConstructor){
+                opens--;
+            }
+        }
+
+        // remove all wrapped tokens from the token array, including nest end token.
+        var childTokens = tokens.splice(index + 1, position - 1 - index);
+
+        // Remove the nest end token.
+        childTokens.pop();
+
+        // parse them, then add them as child tokens.
+        this.childTokens = parse(childTokens);
+    };
+}
+
+function scanForToken(tokenisers, expression){
+    for (var i = 0; i < tokenisers.length; i++) {
+        var token = tokenisers[i].tokenise(expression);
+        if (token) {
+            return token;
+        }
+    }
+}
+
+function sortByPrecedence(items, key){
+    return items.slice().sort(function(a,b){
+        var precedenceDifference = a[key] - b[key];
+        return precedenceDifference ? precedenceDifference : items.indexOf(a) - items.indexOf(b);
+    });
+}
+
+function tokenise(expression, tokenConverters, memoisedTokens) {
+    if(!expression){
+        return [];
+    }
+
+    if(memoisedTokens && memoisedTokens[expression]){
+        return memoisedTokens[expression].slice();
+    }
+
+    tokenConverters = sortByPrecedence(tokenConverters, 'tokenPrecedence');
+
+    var originalExpression = expression,
+        tokens = [],
+        totalCharsProcessed = 0,
+        previousLength,
+        reservedKeywordToken;
+
+    do {
+        previousLength = expression.length;
+
+        var token;
+
+        token = scanForToken(tokenConverters, expression);
+
+        if(token){
+            expression = expression.slice(token.length);
+            totalCharsProcessed += token.length;
+            tokens.push(token);
+            continue;
+        }
+
+        if(expression.length === previousLength){
+            throw "Unable to determine next token in expression: " + expression;
+        }
+
+    } while (expression);
+
+    memoisedTokens && (memoisedTokens[originalExpression] = tokens.slice());
+
+    return tokens;
+}
+
+function parse(tokens){
+    var parsedTokens = 0,
+        tokensByPrecedence = sortByPrecedence(tokens, 'parsePrecedence'),
+        currentToken = tokensByPrecedence[0],
+        tokenNumber = 0;
+
+    while(currentToken && currentToken.parsed == true){
+        currentToken = tokensByPrecedence[tokenNumber++];
+    }
+
+    if(!currentToken){
+        return tokens;
+    }
+
+    if(currentToken.parse){
+        currentToken.parse(tokens, tokens.indexOf(currentToken), parse);
+    }
+
+    // Even if the token has no parse method, it is still concidered 'parsed' at this point.
+    currentToken.parsed = true;
+
+    return parse(tokens);
+}
+
+function evaluate(tokens, scope){
+    scope = scope || new Scope();
+    for(var i = 0; i < tokens.length; i++){
+        var token = tokens[i];
+        token.evaluate(scope);
+    }
+
+    return tokens;
+}
+
+function printTopExpressions(stats){
+    var allStats = [];
+    for(var key in stats){
+        allStats.push({
+            expression: key,
+            time: stats[key].time,
+            calls: stats[key].calls,
+            averageTime: stats[key].averageTime
+        });
+    }
+
+    allStats.sort(function(stat1, stat2){
+        return stat2.time - stat1.time;
+    }).slice(0, 10).forEach(function(stat){
+        console.log([
+            "Expression: ",
+            stat.expression,
+            '\n',
+            'Average evaluation time: ',
+            stat.averageTime,
+            '\n',
+            'Total time: ',
+            stat.time,
+            '\n',
+            'Call count: ',
+            stat.calls
+        ].join(''));
+    });
+}
+
+function Lang(){
+    var lang = {},
+        memoisedTokens = {},
+        memoisedExpressions = {};
+
+
+    var stats = {};
+
+    lang.printTopExpressions = function(){
+        printTopExpressions(stats);
+    }
+
+    function addStat(stat){
+        var expStats = stats[stat.expression] = stats[stat.expression] || {time:0, calls:0};
+
+        expStats.time += stat.time;
+        expStats.calls++;
+        expStats.averageTime = expStats.time / expStats.calls;
+    }
+
+    lang.parse = parse;
+    lang.tokenise = function(expression, tokenConverters){
+        return tokenise(expression, tokenConverters, memoisedTokens);
+    };
+    lang.evaluate = function(expression, scope, tokenConverters, returnAsTokens){
+        var langInstance = this,
+            memoiseKey = expression,
+            expressionTree,
+            evaluatedTokens,
+            lastToken;
+
+        if(!(scope instanceof Scope)){
+            scope = new Scope(scope);
+        }
+
+        if(Array.isArray(expression)){
+            return evaluate(expression , scope).slice(-1).pop();
+        }
+
+        if(memoisedExpressions[memoiseKey]){
+            expressionTree = memoisedExpressions[memoiseKey].slice();
+        } else{
+            expressionTree = langInstance.parse(langInstance.tokenise(expression, tokenConverters, memoisedTokens));
+
+            memoisedExpressions[memoiseKey] = expressionTree;
+        }
+
+
+        var startTime = now();
+        evaluatedTokens = evaluate(expressionTree , scope);
+        addStat({
+            expression: expression,
+            time: now() - startTime
+        });
+
+        if(returnAsTokens){
+            return evaluatedTokens.slice();
+        }
+
+        lastToken = evaluatedTokens.slice(-1).pop();
+
+        return lastToken && lastToken.result;
+    };
+
+    lang.callWith = callWith;
+    return lang;
+};
+
+Lang.createNestingParser = createNestingParser;
+Lang.Scope = Scope;
+Lang.Token = Token;
+
+module.exports = Lang;
+}).call(this,require('_process'))
+},{"./token":"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/lang-js/token.js","_process":"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/process/browser.js"}],"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/lang-js/token.js":[function(require,module,exports){
+function Token(substring, length){
+    this.original = substring;
+    this.length = length;
+}
+Token.prototype.name = 'token';
+Token.prototype.precedence = 0;
+Token.prototype.valueOf = function(){
+    return this.result;
+}
+
+module.exports = Token;
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/merge/merge.js":[function(require,module,exports){
+/*!
+ * @name JavaScript/NodeJS Merge v1.2.0
+ * @author yeikos
+ * @repository https://github.com/yeikos/js.merge
+
+ * Copyright 2014 yeikos - MIT license
+ * https://raw.github.com/yeikos/js.merge/master/LICENSE
+ */
+
+;(function(isNode) {
+
+	/**
+	 * Merge one or more objects 
+	 * @param bool? clone
+	 * @param mixed,... arguments
+	 * @return object
+	 */
+
+	var Public = function(clone) {
+
+		return merge(clone === true, false, arguments);
+
+	}, publicName = 'merge';
+
+	/**
+	 * Merge two or more objects recursively 
+	 * @param bool? clone
+	 * @param mixed,... arguments
+	 * @return object
+	 */
+
+	Public.recursive = function(clone) {
+
+		return merge(clone === true, true, arguments);
+
+	};
+
+	/**
+	 * Clone the input removing any reference
+	 * @param mixed input
+	 * @return mixed
+	 */
+
+	Public.clone = function(input) {
+
+		var output = input,
+			type = typeOf(input),
+			index, size;
+
+		if (type === 'array') {
+
+			output = [];
+			size = input.length;
+
+			for (index=0;index<size;++index)
+
+				output[index] = Public.clone(input[index]);
+
+		} else if (type === 'object') {
+
+			output = {};
+
+			for (index in input)
+
+				output[index] = Public.clone(input[index]);
+
+		}
+
+		return output;
+
+	};
+
+	/**
+	 * Merge two objects recursively
+	 * @param mixed input
+	 * @param mixed extend
+	 * @return mixed
+	 */
+
+	function merge_recursive(base, extend) {
+
+		if (typeOf(base) !== 'object')
+
+			return extend;
+
+		for (var key in extend) {
+
+			if (typeOf(base[key]) === 'object' && typeOf(extend[key]) === 'object') {
+
+				base[key] = merge_recursive(base[key], extend[key]);
+
+			} else {
+
+				base[key] = extend[key];
+
+			}
+
+		}
+
+		return base;
+
+	}
+
+	/**
+	 * Merge two or more objects
+	 * @param bool clone
+	 * @param bool recursive
+	 * @param array argv
+	 * @return object
+	 */
+
+	function merge(clone, recursive, argv) {
+
+		var result = argv[0],
+			size = argv.length;
+
+		if (clone || typeOf(result) !== 'object')
+
+			result = {};
+
+		for (var index=0;index<size;++index) {
+
+			var item = argv[index],
+
+				type = typeOf(item);
+
+			if (type !== 'object') continue;
+
+			for (var key in item) {
+
+				var sitem = clone ? Public.clone(item[key]) : item[key];
+
+				if (recursive) {
+
+					result[key] = merge_recursive(result[key], sitem);
+
+				} else {
+
+					result[key] = sitem;
+
+				}
+
+			}
+
+		}
+
+		return result;
+
+	}
+
+	/**
+	 * Get type of variable
+	 * @param mixed input
+	 * @return string
+	 *
+	 * @see http://jsperf.com/typeofvar
+	 */
+
+	function typeOf(input) {
+
+		return ({}).toString.call(input).slice(8, -1).toLowerCase();
+
+	}
+
+	if (isNode) {
+
+		module.exports = Public;
+
+	} else {
+
+		window[publicName] = Public;
+
+	}
+
+})(typeof module === 'object' && module && typeof module.exports === 'object' && module.exports);
+},{}],"/home/kory/dev/gaffa-frame/node_modules/gel-js/node_modules/spec-js/spec.js":[function(require,module,exports){
+Object.create = Object.create || function (o) {
+    if (arguments.length > 1) {
+        throw new Error('Object.create implementation only accepts the first parameter.');
+    }
+    function F() {}
+    F.prototype = o;
+    return new F();
+};
+
+function createSpec(child, parent){
+    var parentPrototype;
+
+    if(!parent) {
+        parent = Object;
+    }
+
+    if(!parent.prototype) {
+        parent.prototype = {};
+    }
+
+    parentPrototype = parent.prototype;
+
+    child.prototype = Object.create(parent.prototype);
+    child.prototype.__super__ = parentPrototype;
+    child.__super__ = parent;
+
+    // Yes, This is 'bad'. However, it runs once per Spec creation.
+    var spec = new Function("child", "return function " + child.name + "(){child.__super__.apply(this, arguments);return child.apply(this, arguments);}")(child);
+
+    spec.prototype = child.prototype;
+    spec.prototype.constructor = child.prototype.constructor = spec;
+    spec.__super__ = parent;
+
+    return spec;
+}
+
+module.exports = createSpec;
+},{}],"/home/kory/dev/gaffa-frame/node_modules/simple-ajax/index.js":[function(require,module,exports){
 var EventEmitter = require('events').EventEmitter;
 
 function tryParseJson(data){
@@ -8040,10 +9841,10 @@ function parseQueryString(url){
 
     if(urlParts.length>1){
 
-        var queryStringData = urlParts.pop().split("&");
+        var queryStringData = urlParts.pop().split('&');
 
         for(var i = 0; i < queryStringData.length; i++) {
-            var parts = queryStringData[i].split("="),
+            var parts = queryStringData[i].split('='),
                 key = window.unescape(parts[0]),
                 value = window.unescape(parts[1]);
 
@@ -8082,14 +9883,13 @@ function Ajax(settings){
 
     ajax.settings = settings;
     ajax.request = new window.XMLHttpRequest();
-    ajax.settings.method = ajax.settings.method || "get";
+    ajax.settings.method = ajax.settings.method || 'get';
 
     if(ajax.settings.cors){
         //http://www.html5rocks.com/en/tutorials/cors/
-        if ("withCredentials" in ajax.request) {
-            // all good.
-
-        } else if (typeof XDomainRequest != "undefined") {
+        if ('withCredentials' in ajax.request) {
+            ajax.request.withCredentials = true;
+        } else if (typeof XDomainRequest !== 'undefined') {
             // Otherwise, check if XDomainRequest.
             // XDomainRequest only exists in IE, and is IE's way of making CORS requests.
             ajax.request = new window.XDomainRequest();
@@ -8097,8 +9897,6 @@ function Ajax(settings){
             // Otherwise, CORS is not supported by the browser.
             ajax.emit('error', new Error('Cors is not supported by this browser'));
         }
-    }else{
-        ajax.request = new window.XMLHttpRequest();
     }
 
     if(ajax.settings.cache === false){
@@ -8118,11 +9916,11 @@ function Ajax(settings){
         ajax.settings.data = null;
     }
 
-    ajax.request.addEventListener("progress", function(event){
+    ajax.request.addEventListener('progress', function(event){
         ajax.emit('progress', event);
     }, false);
 
-    ajax.request.addEventListener("load", function(event){
+    ajax.request.addEventListener('load', function(event){
         var data = event.target.responseText;
 
         if(ajax.settings.dataType && ajax.settings.dataType.toLowerCase() === 'json'){
@@ -8141,19 +9939,19 @@ function Ajax(settings){
 
     }, false);
 
-    ajax.request.addEventListener("error", function(event){
+    ajax.request.addEventListener('error', function(event){
         ajax.emit('error', event);
     }, false);
 
-    ajax.request.addEventListener("abort", function(event){
+    ajax.request.addEventListener('abort', function(event){
         ajax.emit('abort', event);
     }, false);
 
-    ajax.request.addEventListener("loadend", function(event){
+    ajax.request.addEventListener('loadend', function(event){
         ajax.emit('complete', event);
     }, false);
 
-    ajax.request.open(ajax.settings.method || "get", ajax.settings.url, true);
+    ajax.request.open(ajax.settings.method || 'get', ajax.settings.url, true);
 
     // Set default headers
     if(ajax.settings.contentType !== false){
@@ -8180,7 +9978,7 @@ Ajax.prototype.send = function(){
 };
 
 module.exports = Ajax;
-},{"events":76}],66:[function(require,module,exports){
+},{"events":"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/events/events.js"}],"/home/kory/dev/gaffa-frame/node_modules/statham/createKey.js":[function(require,module,exports){
 function escapeHex(hex){
     return String.fromCharCode(hex);
 }
@@ -8193,7 +9991,7 @@ function createKey(number){
 }
 
 module.exports = createKey;
-},{}],67:[function(require,module,exports){
+},{}],"/home/kory/dev/gaffa-frame/node_modules/statham/parse.js":[function(require,module,exports){
 var revive = require('./revive');
 
 function parse(json, reviver){
@@ -8201,7 +9999,7 @@ function parse(json, reviver){
 }
 
 module.exports = parse;
-},{"./revive":68}],68:[function(require,module,exports){
+},{"./revive":"/home/kory/dev/gaffa-frame/node_modules/statham/revive.js"}],"/home/kory/dev/gaffa-frame/node_modules/statham/revive.js":[function(require,module,exports){
 var createKey = require('./createKey'),
     keyKey = createKey(-1);
 
@@ -8260,13 +10058,13 @@ function revive(input){
 }
 
 module.exports = revive;
-},{"./createKey":66}],69:[function(require,module,exports){
+},{"./createKey":"/home/kory/dev/gaffa-frame/node_modules/statham/createKey.js"}],"/home/kory/dev/gaffa-frame/node_modules/statham/statham.js":[function(require,module,exports){
 module.exports = {
     stringify: require('./stringify'),
     parse: require('./parse'),
     revive: require('./revive')
 };
-},{"./parse":67,"./revive":68,"./stringify":70}],70:[function(require,module,exports){
+},{"./parse":"/home/kory/dev/gaffa-frame/node_modules/statham/parse.js","./revive":"/home/kory/dev/gaffa-frame/node_modules/statham/revive.js","./stringify":"/home/kory/dev/gaffa-frame/node_modules/statham/stringify.js"}],"/home/kory/dev/gaffa-frame/node_modules/statham/stringify.js":[function(require,module,exports){
 var createKey = require('./createKey'),
     keyKey = createKey(-1);
 
@@ -8322,7 +10120,7 @@ function stringify(input, replacer, spacer){
 }
 
 module.exports = stringify;
-},{"./createKey":66}],71:[function(require,module,exports){
+},{"./createKey":"/home/kory/dev/gaffa-frame/node_modules/statham/createKey.js"}],"/home/kory/dev/gaffa-frame/test/index.js":[function(require,module,exports){
 var Gaffa = require('gaffa'),
     Container = require('gaffa-container');
     Frame = require('../');
@@ -8344,13 +10142,24 @@ urlBox.value.binding = '[url]';
 
 gaffa.model.set('[url]', 'test.json');
 
+var frame2 = new Frame();
+
 window.addEventListener('load', function(){
     gaffa.views.add([
         urlBox,
-        frame
+        frame,
+        frame2
     ]);
+
+        
+    frame2._load({
+        _type:'text',
+        text:{
+            value:'arbitrary loaded view'
+        }
+    });
 });
-},{"../":1,"gaffa":17,"gaffa-container":3,"gaffa-text":4,"gaffa-textbox":11}],72:[function(require,module,exports){
+},{"../":"/home/kory/dev/gaffa-frame/frame.js","gaffa":"/home/kory/dev/gaffa-frame/node_modules/gaffa/gaffa.js","gaffa-container":"/home/kory/dev/gaffa-frame/node_modules/gaffa-container/container.js","gaffa-text":"/home/kory/dev/gaffa-frame/node_modules/gaffa-text/text.js","gaffa-textbox":"/home/kory/dev/gaffa-frame/node_modules/gaffa-textbox/textbox.js"}],"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/buffer/index.js":[function(require,module,exports){
 /*!
  * The buffer module from node.js, for the browser.
  *
@@ -9402,7 +11211,7 @@ function decodeUtf8Char (str) {
   }
 }
 
-},{"base64-js":73,"ieee754":74,"is-array":75}],73:[function(require,module,exports){
+},{"base64-js":"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/buffer/node_modules/base64-js/lib/b64.js","ieee754":"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/buffer/node_modules/ieee754/index.js","is-array":"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/buffer/node_modules/is-array/index.js"}],"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/buffer/node_modules/base64-js/lib/b64.js":[function(require,module,exports){
 var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 ;(function (exports) {
@@ -9524,7 +11333,7 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 	exports.fromByteArray = uint8ToBase64
 }(typeof exports === 'undefined' ? (this.base64js = {}) : exports))
 
-},{}],74:[function(require,module,exports){
+},{}],"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/buffer/node_modules/ieee754/index.js":[function(require,module,exports){
 exports.read = function(buffer, offset, isLE, mLen, nBytes) {
   var e, m,
       eLen = nBytes * 8 - mLen - 1,
@@ -9610,7 +11419,7 @@ exports.write = function(buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128;
 };
 
-},{}],75:[function(require,module,exports){
+},{}],"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/buffer/node_modules/is-array/index.js":[function(require,module,exports){
 
 /**
  * isArray
@@ -9645,7 +11454,7 @@ module.exports = isArray || function (val) {
   return !! val && '[object Array]' == str.call(val);
 };
 
-},{}],76:[function(require,module,exports){
+},{}],"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/events/events.js":[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9948,7 +11757,7 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],77:[function(require,module,exports){
+},{}],"/usr/lib/node_modules/watchify/node_modules/browserify/node_modules/process/browser.js":[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -10013,4 +11822,4 @@ process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
 
-},{}]},{},[71]);
+},{}]},{},["/home/kory/dev/gaffa-frame/test/index.js"]);

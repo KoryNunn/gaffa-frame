@@ -19,9 +19,20 @@ urlBox.value.binding = '[url]';
 
 gaffa.model.set('[url]', 'test.json');
 
+var frame2 = new Frame();
+
 window.addEventListener('load', function(){
     gaffa.views.add([
         urlBox,
-        frame
+        frame,
+        frame2
     ]);
+
+        
+    frame2._load({
+        _type:'text',
+        text:{
+            value:'arbitrary loaded view'
+        }
+    });
 });

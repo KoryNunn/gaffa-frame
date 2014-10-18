@@ -17,6 +17,7 @@ Frame.prototype.render = function(){
     this.renderedElement = renderedElement;
 };
 Frame.prototype._requestData = function(url, callback){
+    var frame = this;
     if(url == null){
         return;
     }
@@ -39,7 +40,7 @@ Frame.prototype._requestData = function(url, callback){
         callback({error: error});
     });
     ajax.on('complete', function(){
-        this._pendingRequest = null;
+        frame._pendingRequest = null;
     });
 
     ajax.send();
@@ -49,7 +50,7 @@ Frame.prototype._error = function(error){
 };
 Frame.prototype._load = function(data){
     var gaffa = this.gaffa;
-    
+
     if(this._loadedView){
         this._loadedView.remove();
         this._loadedView = null;

@@ -49,6 +49,10 @@ Frame.prototype._error = function(error){
     this.triggerActions('error', {error: error});
 };
 Frame.prototype._load = function(data){
+    if (this._destroyed){
+        return;
+    }
+
     var gaffa = this.gaffa;
 
     if(this._loadedView){
